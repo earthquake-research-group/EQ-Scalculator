@@ -836,6 +836,69 @@ function displayMonteCarloResults(results, outputParam, outputUnit) {
     Plotly.newPlot('mcPlot', [trace], layout, PLOT_CONFIG);
 }
 
+/**
+ * Sweep values for the Explore tab's x axis.
+ *
+ * Derived from the union of the plotted relations' published domains rather
+ * than one hard-coded decade range for every parameter - which swept
+ * displacement out to 10 km of slip and width out to 10 000 km. Padded half a
+ * decade (or half a magnitude unit) each side so the extrapolated tails are
+ * visible without dominating the plot.
+ *
+ * @param {string} param - Parameter symbol on the x axis
+ * @param {string|null} unit - Unit the axis is drawn in
+ * @param {Object} models - From findAvailableModels()
+ * @param {number} [nPoints=240] - Samples across the sweep
+ * @returns {number[]} Ascending x values
+ */
+function buildPlotSweep(param, unit, models, nPoints = 240) {
+    const isMagnitude = param === 'Mw';
+    let lo = Infinity;
+    let hi = -Infinity;
+
+    for (const modelId in models) {
+        const info = models[modelId];
+        if (info.paper === 'virtual') continue;
+        const params = getRelationshipParams(info.paper, info.fault, info.key);
+        if (!params || !params.length) continue;
+
+        const domain = getInputDomain(params, info.direction);
+        if (!domain || domain.degenerate) continue;
+
+        for (const bound of [domain.min, domain.max]) {
+            if (bound === null || !isFinite(bound)) continue;
+            let v = bound;
+            if (domain.unit && unit) {
+                try { v = convertUnits(bound, domain.unit, unit); } catch (e) { /* keep native */ }
+            }
+            if (!isFinite(v) || (!isMagnitude && v <= 0)) continue;
+            lo = Math.min(lo, v);
+            hi = Math.max(hi, v);
+        }
+    }
+
+    // Every relation on this axis is unbounded: fall back to sensible defaults.
+    if (!isFinite(lo) || !isFinite(hi) || hi <= lo) {
+        if (isMagnitude) { lo = 4.5; hi = 9.0; }
+        else if (param === 'M0') { lo = 1e15; hi = 1e22; }
+        else { lo = 0.1; hi = 1e4; }
+    }
+
+    const values = [];
+    if (isMagnitude) {
+        const min = lo - 0.5;
+        const max = hi + 0.5;
+        const step = (max - min) / (nPoints - 1);
+        for (let i = 0; i < nPoints; i++) values.push(min + i * step);
+    } else {
+        const min = Math.log10(lo) - 0.5;
+        const max = Math.log10(hi) + 0.5;
+        const step = (max - min) / (nPoints - 1);
+        for (let i = 0; i < nPoints; i++) values.push(Math.pow(10, min + i * step));
+    }
+    return values;
+}
+
 // Plotting
 function updatePlot() {
     const xParam = document.getElementById('plotXParam').value;
@@ -862,24 +925,7 @@ function updatePlot() {
         const xUnit = getStandardUnit(xParam);
         const yUnit = getStandardUnit(yParam);
         
-        // Generate x values
-        let xValues;
-        if (xParam === 'Mw') {
-            xValues = [];
-            for (let i = 4.5; i <= 9.0; i += 0.05) {
-                xValues.push(i);
-            }
-        } else if (xParam === 'M0') {
-            xValues = [];
-            for (let i = 15; i <= 22; i += 0.1) {
-                xValues.push(Math.pow(10, i));
-            }
-        } else {
-            xValues = [];
-            for (let i = -1; i <= 4; i += 0.05) {
-                xValues.push(Math.pow(10, i));
-            }
-        }
+        const xValues = buildPlotSweep(xParam, xUnit, models);
         
         let validTraces = 0;
         
@@ -934,18 +980,53 @@ function updatePlot() {
                 return y;
             });
             
-            // Filter out null values for plotting
-            const validPoints = xValues.map((x, i) => ({x, y: convertedY[i]}))
-                                       .filter(p => p.y !== null && !isNaN(p.y) && isFinite(p.y));
-            
+            // Split the curve at the model's validity limits: solid where the
+            // authors state the relation applies, dashed where the app is
+            // continuing the end segment beyond it. getTargetSegment extends
+            // the nearest branch silently, so without this the plot gives an
+            // extrapolation the same weight as a published fit.
+            const validPoints = xValues.map((x, i) => ({
+                x,
+                y: convertedY[i],
+                inRange: checkIfExtrapolating(params, x, xUnit, modelInfo.direction) === null
+            })).filter(p => p.y !== null && !isNaN(p.y) && isFinite(p.y));
+
             if (validPoints.length > 0) {
+                const colour = PLOT_COLORWAY[validTraces % PLOT_COLORWAY.length];
+                const inRange = validPoints.map(p => p.inRange ? p.y : null);
+                // Repeat the boundary points so the two traces meet rather than
+                // leaving a gap where the curve crosses its validity limit.
+                const outOfRange = validPoints.map((p, i) => {
+                    if (!p.inRange) return p.y;
+                    const prev = validPoints[i - 1];
+                    const next = validPoints[i + 1];
+                    return (prev && !prev.inRange) || (next && !next.inRange) ? p.y : null;
+                });
+
                 traces.push({
                     x: validPoints.map(p => p.x),
-                    y: validPoints.map(p => p.y),
+                    y: inRange,
                     mode: 'lines',
                     name: modelId,
-                    line: { width: 1.6 }
+                    legendgroup: modelId,
+                    connectgaps: false,
+                    line: { width: 1.6, color: colour }
                 });
+
+                if (outOfRange.some(v => v !== null)) {
+                    traces.push({
+                        x: validPoints.map(p => p.x),
+                        y: outOfRange,
+                        mode: 'lines',
+                        name: `${modelId} (extrapolated)`,
+                        legendgroup: modelId,
+                        showlegend: false,
+                        hoverinfo: 'skip',
+                        connectgaps: false,
+                        line: { width: 1.2, color: colour, dash: 'dot' },
+                        opacity: 0.55
+                    });
+                }
                 validTraces++;
             }
         }
@@ -1066,7 +1147,7 @@ function runComparison() {
                 const modelInfo = allModelsFlat[modelId];
                 if (!modelInfo) return;
 
-                let result = null, resultUnit = null, sigma = null, warning = null;
+                let result = null, resultUnit = null, scatter = null, warning = null;
                 let sigmaIsIntercept = false;
 
                 if (modelInfo.paper === 'virtual') {
@@ -1087,34 +1168,13 @@ function runComparison() {
                     result = solved.result;
                     resultUnit = solved.unit;
 
-                    // Extract sigma from the matched segment
-                    const xKey = modelInfo.direction === 'forward' ? 'x' : 'y';
-                    const modelInputUnit = params[0].units[xKey];
-                    const convertedInput = modelInputUnit
-                        ? convertUnits(inputValue, inputUnit, modelInputUnit)
-                        : inputValue;
-                    const segment = getTargetSegment(params, convertedInput, modelInfo.direction);
-
-                    if (segment) {
-                        if (segment.log10_y_std_dev !== null && segment.log10_y_std_dev !== undefined) {
-                            // Scatter in log10(Y), as published.
-                            sigma = segment.log10_y_std_dev;
-                        } else {
-                            // No total scatter published; fall back to the
-                            // uncertainty on the intercept (Leonard 2014),
-                            // which is a narrower quantity - flagged as such.
-                            sigma = parseStdDevA(segment.std_dev_a);
-                            sigmaIsIntercept = sigma !== null;
-                        }
-
-                        // A sigma in log10(Y) becomes sigma/|b| in log10(X)
-                        // when the relation is inverted. Without this Jacobian
-                        // the interval is understated wherever |b| < 1.
-                        if (sigma !== null && modelInfo.direction === 'inverse') {
-                            const b = segment.coefficients.b;
-                            sigma = b !== 0 ? sigma / Math.abs(b) : null;
-                        }
-                    }
+                    // Sigma, and the space it acts in. scatterFor resolves the
+                    // matched segment, reads whichever sigma field the paper
+                    // publishes, and applies the 1/|b| Jacobian on an inverse
+                    // solve - so the caller never has to know which of the
+                    // three equation forms it is looking at.
+                    scatter = scatterFor(params, inputValue, inputUnit, modelInfo.direction);
+                    sigmaIsIntercept = scatter ? scatter.fromIntercept : false;
 
                     warning = checkIfExtrapolating(params, inputValue, inputUnit, modelInfo.direction);
                 }
@@ -1133,20 +1193,45 @@ function runComparison() {
                     finalUnit = null;
                 }
 
-                // Sigma bounds: computed in model-native units, then converted
+                // Sigma bounds, in model-native units, then carried through the
+                // same conversions as the result itself.
+                //
+                // The band is built in the space the sigma actually lives in:
+                // additive for a magnitude, multiplicative for a quantity whose
+                // scatter is published in log10. Building every band in log10
+                // raised 10 to the power of a magnitude, which printed a +-1
+                // sigma range of 3.86-11.67 Mw on a result of 6.71.
                 let sigmaLower = null, sigmaUpper = null;
-                if (sigma !== null && result !== null && result > 0) {
-                    const log10Result = Math.log10(result);
-                    const rawLower = Math.pow(10, log10Result - sigma);
-                    const rawUpper = Math.pow(10, log10Result + sigma);
-                    try {
-                        sigmaLower = (outputUnit !== 'N/A' && resultUnit)
-                            ? convertUnits(rawLower, resultUnit, outputUnit) : rawLower;
-                        sigmaUpper = (outputUnit !== 'N/A' && resultUnit)
-                            ? convertUnits(rawUpper, resultUnit, outputUnit) : rawUpper;
-                    } catch (e) {
-                        sigmaLower = rawLower;
-                        sigmaUpper = rawUpper;
+                if (scatter !== null && result !== null) {
+                    let rawLower = null, rawUpper = null;
+
+                    if (scatter.space === 'linear') {
+                        rawLower = result - scatter.sigma;
+                        rawUpper = result + scatter.sigma;
+                    } else if (result > 0) {
+                        const log10Result = Math.log10(result);
+                        rawLower = Math.pow(10, log10Result - scatter.sigma);
+                        rawUpper = Math.pow(10, log10Result + scatter.sigma);
+                    }
+
+                    if (rawLower !== null) {
+                        try {
+                            sigmaLower = (outputUnit !== 'N/A' && resultUnit)
+                                ? convertUnits(rawLower, resultUnit, outputUnit) : rawLower;
+                            sigmaUpper = (outputUnit !== 'N/A' && resultUnit)
+                                ? convertUnits(rawUpper, resultUnit, outputUnit) : rawUpper;
+                        } catch (e) {
+                            sigmaLower = rawLower;
+                            sigmaUpper = rawUpper;
+                        }
+
+                        // If the result was converted from M0 to a magnitude,
+                        // the bounds have to make the same trip or the table
+                        // prints a magnitude beside moment error bars.
+                        if (outputParam === 'Mw' && resultUnit) {
+                            sigmaLower = m0ToMw(sigmaLower, resultUnit);
+                            sigmaUpper = m0ToMw(sigmaUpper, resultUnit);
+                        }
                     }
                 }
 

@@ -34,6 +34,21 @@ const CONVERSIONS_TO_M_PER_YR = {
 };
 
 /**
+ * Hanks & Kanamori (1979): Mw = (2/3)*log10(M0) - C.
+ *
+ * One constant, defined once. The app previously used the classic dyne.cm
+ * value of 10.7 while every model file and the verification suite assume
+ * 6.07 in N.m - equivalent to 10.7367 - so Mw -> M0 -> A and Mw -> A
+ * disagreed by a fixed 0.037 Mw, about 9% in area.
+ *
+ * 6.07 is adopted because it is the value Leonard (2014) used to build the
+ * stored Table 3 and Table 4 coefficients, and this tool's job is to
+ * reproduce published relations rather than re-derive them.
+ */
+const HK_CONSTANT_NM = 6.07;
+const HK_CONSTANT_DYNE_CM = HK_CONSTANT_NM + (2 / 3) * 7;  // 10.7367
+
+/**
  * Convert a value from one unit to another
  * @param {number} value - The value to convert
  * @param {string} fromUnit - The unit to convert from
@@ -88,7 +103,7 @@ function m0ToMw(m0Val, m0Unit) {
     try {
         const m0InDyneCm = convertUnits(m0Val, m0Unit, 'dyne.cm');
         if (m0InDyneCm <= 0) return null;
-        return (2/3) * Math.log10(m0InDyneCm) - 10.7;
+        return (2/3) * Math.log10(m0InDyneCm) - HK_CONSTANT_DYNE_CM;
     } catch (e) {
         return null;
     }
@@ -104,7 +119,7 @@ function mwToM0(mwVal, targetUnit) {
     if (mwVal === null || mwVal === undefined || isNaN(mwVal)) return null;
     
     try {
-        const m0InDyneCm = Math.pow(10, (mwVal + 10.7) * 1.5);
+        const m0InDyneCm = Math.pow(10, (mwVal + HK_CONSTANT_DYNE_CM) * 1.5);
         return convertUnits(m0InDyneCm, 'dyne.cm', targetUnit);
     } catch (e) {
         return null;

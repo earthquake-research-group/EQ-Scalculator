@@ -30,7 +30,7 @@ const MODEL_FILES = [
     'scaling_models/leonard_2014/leonard_2014.json',
     'scaling_models/wells_coppersmith_1994/wells_coppersmith_1994.json',
     'scaling_models/somerville_2014/somerville_2014.json',
-    'scaling_models/yang_etal_2020/yang_2020.json',
+    'scaling_models/yang_etal_2021/yang_etal_2021.json',
     'scaling_models/stirling_etal_2024/stirling_etal_2024.json',
     'scaling_models/thingbaijam_etal_2017/thingbaijam_etal_2017.json',
     'scaling_models/strasser_etal_2010/strasser_etal_2010.json',
@@ -224,11 +224,16 @@ check(near(parse(0.12), 0.12, 1e-9), 'parseStdDevA(0.12) = 0.12 (numeric passthr
 check(parse(null) === null, 'parseStdDevA(null) = null');
 
 // Monte Carlo scatter sanity: sigma of log10(AD) should be ~0.455 (=|−1.86−(−2.77)|/2), not ~4.3.
+// Seeded, so a tolerance this tight cannot fail intermittently.
 const mcRun = vm.runInContext('solveOneSimulationRun', ctx);
+const makeRng = vm.runInContext('makeRng', ctx);
 const logs = [];
-for (let i = 0; i < 3000; i++) {
-    const r = mcRun(ss.D_from_L, 100, 'km', 'forward', true);
-    if (r.result > 0) logs.push(Math.log10(r.result));
+{
+    const rng = makeRng('verify-mc-scatter');
+    for (let i = 0; i < 3000; i++) {
+        const r = mcRun(ss.D_from_L, 100, 'km', 'forward', true, rng);
+        if (r.result > 0) logs.push(Math.log10(r.result));
+    }
 }
 const mean = logs.reduce((s, v) => s + v, 0) / logs.length;
 const sd = Math.sqrt(logs.reduce((s, v) => s + (v - mean) ** 2, 0) / (logs.length - 1));
@@ -305,7 +310,9 @@ for (const rel of MODEL_FILES) {
                         `${paper}/${style}/${key} ${dir}: domain min <= max`);
 
                     for (const v of PROBES) {
-                        const inDomain = (dom.min === null || v >= dom.min) && (dom.max === null || v < dom.max);
+                        // Inclusive at the top, matching the solver: a value on
+                        // the published upper bound is inside the stated range.
+                        const inDomain = (dom.min === null || v >= dom.min) && (dom.max === null || v <= dom.max);
                         const flagged = extrapolating(segs, v, unit, dir) !== null;
                         // Inside the union must never be reported as extrapolation.
                         if (inDomain) {
@@ -366,6 +373,384 @@ for (const [style, rels] of Object.entries(faultTypes)) {
             const sg = parseSigma(segs[i].std_dev_a);
             check(sg !== null && sg > 0 && sg < 2,
                 `Leonard ${style}/${key}[${i}]: std_dev_a "${segs[i].std_dev_a}" parses to a plausible sigma (${sg})`);
+        }
+    }
+}
+
+// ---- 4d. Sigma space, across every relation and both directions ----
+//
+// A published sigma describes scatter in the DEPENDENT variable, in whatever
+// space that variable appears in the equation. For `Y = a + b*log10(X)` the
+// dependent variable is a magnitude and appears untransformed, so its sigma is
+// in magnitude units. Applying it as log10 scatter raises 10 to the power of a
+// magnitude - the comparison table printed a +-1 sigma band of 3.86 to 11.67 on
+// a result of 6.71, and Monte Carlo returned a standard deviation of 4.7.
+//
+// This is the generic form of that bug: any relation whose output is a
+// magnitude must report 'linear', and any whose output is a physical dimension
+// must report 'log10'. It holds for the whole corpus, present and future.
+const scatterForFn = vm.runInContext('scatterFor', ctx);
+const domainOfFn = vm.runInContext('getInputDomain', ctx);
+
+/** A value comfortably inside a relation's domain, for probing. */
+function probeInside(segs, dir) {
+    const dom = domainOfFn(segs, dir);
+    if (!dom || dom.degenerate) return null;
+    const isMag = segs[0].units[dir === 'forward' ? 'x' : 'y'] === null;
+    if (dom.min !== null && dom.max !== null) return (dom.min + dom.max) / 2;
+    if (dom.min !== null) return isMag ? dom.min + 0.5 : dom.min * 2 || 1;
+    if (dom.max !== null) return isMag ? dom.max - 0.5 : dom.max / 2;
+    return isMag ? 7 : 1;
+}
+
+let sigmaSpaceChecked = 0;
+for (const relPath of MODEL_FILES) {
+    const doc = JSON.parse(readFileSync(join(root, relPath), 'utf8'));
+    for (const [paper, body] of Object.entries(doc)) {
+        for (const [style, rels] of Object.entries(body.fault_types || {})) {
+            for (const [key, segs] of Object.entries(rels)) {
+                const [yName, xName] = key.split('_from_');
+                for (const dir of ['forward', 'inverse']) {
+                    const outName = dir === 'forward' ? yName : xName;
+                    const probe = probeInside(segs, dir);
+                    if (probe === null) continue;
+                    const unit = segs[0].units[dir === 'forward' ? 'x' : 'y'];
+                    const sc = scatterForFn(segs, probe, unit, dir);
+                    if (!sc) continue;
+
+                    sigmaSpaceChecked++;
+                    const wantLinear = outName === 'Mw';
+                    check(sc.space === (wantLinear ? 'linear' : 'log10'),
+                        `${paper}/${style}/${key} ${dir}: sigma space is ${sc.space}, want ` +
+                        `${wantLinear ? 'linear' : 'log10'} (output ${outName})`);
+                    check(sc.sigma > 0 && sc.sigma < 5,
+                        `${paper}/${style}/${key} ${dir}: sigma ${sc.sigma} is plausible`);
+                    if (wantLinear) {
+                        check(sc.sigma < 1.5,
+                            `${paper}/${style}/${key} ${dir}: magnitude sigma ${sc.sigma.toFixed(3)} < 1.5 Mw`);
+                    }
+                }
+            }
+        }
+    }
+}
+check(sigmaSpaceChecked > 200,
+    `sigma-space check covered ${sigmaSpaceChecked} relation/direction pairs`);
+
+// ---- 4e. Monte Carlo agrees with the analytic sigma, in the right space ----
+//
+// Draws the distribution and compares its spread against what scatterFor says
+// it should be. Pre-fix this failed on every `Y = a + b*log10(X)` forward
+// relation (sd ~4.7 against sigma 0.24) and on every inverse relation (sd 0
+// because model uncertainty was dropped entirely).
+function mcSpread(segs, probe, unit, dir, space, seedLabel, n = 4000) {
+    const rng = makeRng(seedLabel);
+    const vals = [];
+    for (let i = 0; i < n; i++) {
+        const r = mcRun(segs, probe, unit, dir, true, rng);
+        if (r.result === null || !Number.isFinite(r.result)) continue;
+        if (space === 'log10') {
+            if (r.result <= 0) continue;
+            vals.push(Math.log10(r.result));
+        } else {
+            vals.push(r.result);
+        }
+    }
+    if (vals.length < n * 0.9) return null;
+    const m = vals.reduce((s, v) => s + v, 0) / vals.length;
+    return { mean: m, sd: Math.sqrt(vals.reduce((s, v) => s + (v - m) ** 2, 0) / (vals.length - 1)), n: vals.length };
+}
+
+const MC_CASES = [
+    ['Wells and Coppersmith 1994', 'All', 'Mw_from_A', 500, 'km^2', 'forward'],
+    ['Wells and Coppersmith 1994', 'All', 'Mw_from_A', 7.0, null, 'inverse'],
+    ['Wells and Coppersmith 1994', 'Strike-Slip', 'Mw_from_AD', 4.5, 'm', 'forward'],
+    ['Stirling et al. 2024', 'Crustal (NZ NSHM 2022 - Preferred)', 'Mw_from_A', 500, 'km^2', 'forward'],
+    ['Thingbaijam et al. 2017', 'Strike-Slip', 'L_from_Mw', 7.0, null, 'forward'],
+    ['Thingbaijam et al. 2017', 'Strike-Slip', 'L_from_Mw', 100, 'km', 'inverse'],
+    ['Strasser et al. 2010', 'Subduction Interface', 'A_from_Mw', 8.0, null, 'forward'],
+    ['Leonard 2014', 'Interplate Strike-Slip', 'Mw_from_A', 500, 'km^2', 'forward']
+];
+for (const [paper, style, key, probe, unit, dir] of MC_CASES) {
+    const doc = MODEL_FILES.map(f => JSON.parse(readFileSync(join(root, f), 'utf8')))
+        .find(d => d[paper]);
+    const segs = doc[paper].fault_types[style][key];
+    const sc = scatterForFn(segs, probe, unit, dir);
+    check(sc !== null, `MC ${paper}/${style}/${key} ${dir}: scatterFor returns a sigma`);
+    if (!sc) continue;
+
+    const stat = mcSpread(segs, probe, unit, dir, sc.space, `mc:${paper}:${key}:${dir}`);
+    check(stat !== null, `MC ${paper}/${style}/${key} ${dir}: draws succeeded`);
+    if (!stat) continue;
+
+    // 4 standard errors on the sample sd: se(sd) ~ sd/sqrt(2n).
+    const tol = 4 * sc.sigma / Math.sqrt(2 * stat.n);
+    check(Math.abs(stat.sd - sc.sigma) < tol,
+        `MC ${paper}/${style}/${key} ${dir}: sample sd ${stat.sd.toFixed(4)} matches sigma ` +
+        `${sc.sigma.toFixed(4)} in ${sc.space} space (tol ${tol.toFixed(4)})`);
+
+    const det = solve(segs, probe, unit, dir).result;
+    const detInSpace = sc.space === 'log10' ? Math.log10(det) : det;
+    check(Math.abs(stat.mean - detInSpace) < 4 * sc.sigma / Math.sqrt(stat.n),
+        `MC ${paper}/${style}/${key} ${dir}: sample mean ${stat.mean.toFixed(4)} centred on the ` +
+        `deterministic result ${detInSpace.toFixed(4)}`);
+}
+
+// With model uncertainty off, a simulation run must reproduce the deterministic
+// solve exactly - every relation, both directions. One line, whole class of
+// refactor error.
+let exactChecked = 0;
+for (const relPath of MODEL_FILES) {
+    const doc = JSON.parse(readFileSync(join(root, relPath), 'utf8'));
+    for (const [paper, body] of Object.entries(doc)) {
+        for (const [style, rels] of Object.entries(body.fault_types || {})) {
+            for (const [key, segs] of Object.entries(rels)) {
+                for (const dir of ['forward', 'inverse']) {
+                    const probe = probeInside(segs, dir);
+                    if (probe === null) continue;
+                    const unit = segs[0].units[dir === 'forward' ? 'x' : 'y'];
+                    const det = solve(segs, probe, unit, dir).result;
+                    const sim = mcRun(segs, probe, unit, dir, false).result;
+                    if (det === null && sim === null) continue;
+                    exactChecked++;
+                    check(det === sim,
+                        `${paper}/${style}/${key} ${dir}: solveOneSimulationRun with uncertainty off ` +
+                        `equals solveRelationship (${sim} vs ${det})`);
+                }
+            }
+        }
+    }
+}
+check(exactChecked > 200, `deterministic-equivalence check covered ${exactChecked} pairs`);
+
+// Same seed, same stream: a published Monte Carlo result must be reproducible.
+{
+    const wcA = JSON.parse(readFileSync(
+        join(root, 'scaling_models/wells_coppersmith_1994/wells_coppersmith_1994.json'), 'utf8')
+    )['Wells and Coppersmith 1994'].fault_types.All.Mw_from_A;
+    const draw = (seed) => {
+        const rng = makeRng(seed);
+        return Array.from({ length: 25 }, () => mcRun(wcA, 500, 'km^2', 'forward', true, rng).result);
+    };
+    const a = draw('seed-one'), b = draw('seed-one'), c = draw('seed-two');
+    check(JSON.stringify(a) === JSON.stringify(b), 'MC: the same seed reproduces the same stream exactly');
+    check(JSON.stringify(a) !== JSON.stringify(c), 'MC: a different seed gives a different stream');
+}
+
+// ---- 4f. Segment selection outside the domain ----
+//
+// range_x is stated in X, so on an inverse solve it has to be mapped into the
+// input's space before comparing. Testing a Y-space input against an X-space
+// bound sent sub-floor inputs to the saturated high-magnitude branch: Allen &
+// Hayes returned Mw -3.97 for a 10 km^2 rupture.
+{
+    const ah = JSON.parse(readFileSync(
+        join(root, 'scaling_models/allen_hayes_2017/allen_hayes_2017.json'), 'utf8')
+    )['Allen & Hayes 2017'].fault_types['Subduction Interface (Bilinear)'].A_from_Mw;
+    for (const A of [1, 10, 30]) {
+        const mw = solve(ah, A, 'km^2', 'inverse').result;
+        check(mw !== null && mw > 3 && mw < 7,
+            `A&H bilinear A=${A} km^2 -> Mw ${mw?.toFixed(2)} extrapolates the lower branch ` +
+            `(was Mw -3.97 pre-fix, from the saturated upper branch)`);
+    }
+    check(near(solve(ah, 200000, 'km^2', 'inverse').result, 9.91, 0.05),
+        'A&H bilinear above the breakpoint still uses the upper branch');
+}
+
+// Generic form: monotone in, monotone out. A direction-confused segment pick
+// breaks monotonicity, so this catches the class rather than the instance.
+let monotoneChecked = 0;
+for (const relPath of MODEL_FILES) {
+    const doc = JSON.parse(readFileSync(join(root, relPath), 'utf8'));
+    for (const [paper, body] of Object.entries(doc)) {
+        for (const [style, rels] of Object.entries(body.fault_types || {})) {
+            for (const [key, segs] of Object.entries(rels)) {
+                for (const dir of ['forward', 'inverse']) {
+                    const dom = domainOfFn(segs, dir);
+                    if (!dom || dom.degenerate) continue;
+                    const unit = segs[0].units[dir === 'forward' ? 'x' : 'y'];
+                    const isMag = unit === null;
+                    const lo = dom.min !== null ? dom.min : (isMag ? 5 : 0.01);
+                    const hi = dom.max !== null ? dom.max : (isMag ? 9 : lo * 1e3);
+                    if (!(hi > lo)) continue;
+
+                    // Probe well outside the range in the input's own metric.
+                    const probes = (isMag
+                        ? [lo - 2, lo - 0.5, lo, (lo + hi) / 2, hi, hi + 0.5, hi + 2]
+                        : [lo / 100, lo / 10, lo, Math.sqrt(lo * hi), hi, hi * 10, hi * 100]
+                    ).filter(v => v > 0);
+                    const out = probes.map(v => solve(segs, v, unit, dir).result);
+                    const defined = out.filter(v => v !== null);
+                    if (defined.length < 2) continue;
+
+                    monotoneChecked++;
+                    check(defined.every(v => Number.isFinite(v)),
+                        `${paper}/${style}/${key} ${dir}: finite outside the published range`);
+                    let inc = true, dec = true;
+                    for (let i = 1; i < out.length; i++) {
+                        if (out[i] === null || out[i - 1] === null) continue;
+                        if (!(out[i] >= out[i - 1])) inc = false;
+                        if (!(out[i] <= out[i - 1])) dec = false;
+                    }
+                    check(inc || dec,
+                        `${paper}/${style}/${key} ${dir}: monotone across and beyond its domain ` +
+                        `(${out.map(v => v === null ? 'null' : v.toPrecision(3)).join(' ')})`);
+                }
+            }
+        }
+    }
+}
+check(monotoneChecked > 200, `monotonicity check covered ${monotoneChecked} relation/direction pairs`);
+
+// ---- 4g. The published upper bound is inside the published range ----
+let boundsChecked = 0;
+for (const relPath of MODEL_FILES) {
+    const doc = JSON.parse(readFileSync(join(root, relPath), 'utf8'));
+    for (const [paper, body] of Object.entries(doc)) {
+        for (const [style, rels] of Object.entries(body.fault_types || {})) {
+            for (const [key, segs] of Object.entries(rels)) {
+                for (const dir of ['forward', 'inverse']) {
+                    const dom = domainOfFn(segs, dir);
+                    if (!dom || dom.degenerate) continue;
+                    const unit = segs[0].units[dir === 'forward' ? 'x' : 'y'];
+                    for (const edge of [dom.min, dom.max]) {
+                        if (edge === null || !Number.isFinite(edge) || edge <= 0) continue;
+                        boundsChecked++;
+                        check(extrapolating(segs, edge, unit, dir) === null,
+                            `${paper}/${style}/${key} ${dir}: the published bound ${edge} is in range, ` +
+                            `not an extrapolation`);
+                    }
+                }
+            }
+        }
+    }
+}
+check(boundsChecked > 100, `bound-inclusivity check covered ${boundsChecked} bounds`);
+{
+    const wcSRL = JSON.parse(readFileSync(
+        join(root, 'scaling_models/wells_coppersmith_1994/wells_coppersmith_1994.json'), 'utf8')
+    )['Wells and Coppersmith 1994'].fault_types.All.Mw_from_SRL;
+    check(extrapolating(wcSRL, 432, 'km', 'forward') === null,
+        'W&C All SRL = 432 km, the exact published bound, is in range (was flagged pre-fix)');
+    check(extrapolating(wcSRL, 432.1, 'km', 'forward') !== null,
+        'W&C All SRL = 432.1 km is flagged as extrapolation');
+}
+
+// ---- 4h. Anti-regression pins on the numbers the audit reported ----
+{
+    const wcA = JSON.parse(readFileSync(
+        join(root, 'scaling_models/wells_coppersmith_1994/wells_coppersmith_1994.json'), 'utf8')
+    )['Wells and Coppersmith 1994'].fault_types.All.Mw_from_A;
+    const det = solve(wcA, 500, 'km^2', 'forward').result;
+    const sc = scatterForFn(wcA, 500, 'km^2', 'forward');
+    check(near(det, 6.715, 0.005), `W&C All A=500 km^2 -> Mw ${det.toFixed(3)}`);
+    check(sc.space === 'linear' && near(det - sc.sigma, 6.475, 0.005) && near(det + sc.sigma, 6.955, 0.005),
+        `W&C All A=500 km^2 band ${(det - sc.sigma).toFixed(2)}-${(det + sc.sigma).toFixed(2)} Mw ` +
+        `(was 3.86-11.67 pre-fix, from log-space sigma on a magnitude)`);
+
+    const scInv = scatterForFn(wcA, 7.0, null, 'inverse');
+    check(scInv.space === 'log10' && near(scInv.sigma, 0.2449, 0.001),
+        `W&C All inverse sigma ${scInv.sigma.toFixed(4)} = 0.24/|0.98| in log10(A)`);
+    const stat = mcSpread(wcA, 7.0, null, 'inverse', 'log10', 'pin:wc-inverse');
+    check(stat && stat.sd > 0.2,
+        `W&C All Mw 7 -> A carries model scatter (sd ${stat?.sd.toFixed(3)} in log10; was exactly 0 pre-fix)`);
+}
+
+// The app's M0 <-> Mw conversion must use the same constant the model files
+// were built with, or every route through M0 drifts by a fixed 0.037 Mw.
+// Leonard's own tables are the fixed point: his corrected M0_from_D intercept
+// of 19.36 must map onto his printed Mw_from_D intercept of 6.84.
+{
+    const toMw = vm.runInContext('m0ToMw', ctx);
+    const toM0 = vm.runInContext('mwToM0', ctx);
+    check(near(toMw(Math.pow(10, 19.36), 'Nm'), 6.84, 0.005),
+        `m0ToMw(10^19.36 Nm) = ${toMw(Math.pow(10, 19.36), 'Nm')?.toFixed(4)}, Leonard's printed ` +
+        `Mw_from_D intercept 6.84 (was 6.873 under the dyne.cm 10.7 constant)`);
+    check(near(vm.runInContext('HK_CONSTANT_NM', ctx), 6.07, 1e-9),
+        'units.js HK_CONSTANT_NM is 6.07, matching the model files and this suite');
+    check(near(toMw(toM0(7.5, 'Nm'), 'Nm'), 7.5, 1e-9), 'Mw -> M0 -> Mw round-trips exactly');
+    check(near(toMw(1e27, 'dyne.cm'), toMw(1e20, 'Nm'), 1e-9),
+        'm0ToMw agrees between dyne.cm and N.m');
+
+    // Mw -> M0 -> A must agree with Mw -> A through the same paper.
+    const ipss = faultTypes['Interplate Strike-Slip'];
+    const viaM0 = solve(ipss.M0_from_A, toM0(7.0, 'Nm'), 'Nm', 'inverse').result / 1e6;
+    const direct = solve(ipss.Mw_from_A, 7.0, null, 'inverse').result;
+    check(near(viaM0 / direct, 1.0, 0.01),
+        `Leonard IP-SS Mw 7 -> A agrees via M0 (${viaM0.toFixed(0)} km^2) and directly ` +
+        `(${direct.toFixed(0)} km^2), ratio ${(viaM0 / direct).toFixed(4)} (was 1.09 pre-fix)`);
+}
+
+// ---- 4i. Structural: distinct parameters must not share a validity range ----
+//
+// Two relations predicting the SAME quantity from DIFFERENT inputs cannot
+// share a fully bounded validity range - a length range is not a width range.
+//
+// Two exclusions keep this free of false positives:
+//   - Relations sharing an X legitimately share breakpoints (Leonard's A, W, D
+//     and M0 from L all break at 5360 m), so the rule keys on
+//     same-Y-different-X only.
+//   - An open-ended range carries little information and can coincide honestly:
+//     Leonard states "> 0" for many relations, and his SCR dip-slip Mw_from_L
+//     and Mw_from_W both start at 2.5 because W = L at the breakpoint. Only a
+//     range bounded on BOTH sides is evidence of a copied cell.
+for (const relPath of MODEL_FILES) {
+    const doc = JSON.parse(readFileSync(join(root, relPath), 'utf8'));
+    for (const [paper, body] of Object.entries(doc)) {
+        for (const [style, rels] of Object.entries(body.fault_types || {})) {
+            const byY = {};
+            for (const [key, segs] of Object.entries(rels)) {
+                const [yName, xName] = key.split('_from_');
+                (byY[yName] = byY[yName] || []).push({ key, xName, segs });
+            }
+            for (const [yName, group] of Object.entries(byY)) {
+                for (let i = 0; i < group.length; i++) {
+                    for (let j = i + 1; j < group.length; j++) {
+                        if (group[i].xName === group[j].xName) continue;
+                        const bounded = (segs) => segs.every(s =>
+                            Array.isArray(s.range_x) && s.range_x[0] !== null && s.range_x[1] !== null);
+                        if (!bounded(group[i].segs) || !bounded(group[j].segs)) continue;
+                        const ri = JSON.stringify(group[i].segs.map(s => s.range_x));
+                        const rj = JSON.stringify(group[j].segs.map(s => s.range_x));
+                        check(ri !== rj,
+                            `${paper}/${style}: ${group[i].key} and ${group[j].key} predict ${yName} from ` +
+                            `different inputs but share range_x ${ri} - one of them is a copy of the other`);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---- 4j. Segment keys are from a known set ----
+//
+// Unknown keys pass silently, so a typo ("slipMeasure" for "slip_measure")
+// would be a no-op. Later phases extend this list as they add fields.
+const SEGMENT_KEYS = new Set([
+    'source', 'description', 'equation_form', 'coefficients',
+    'std_dev_a', 'log10_y_std_dev', 'units', 'range_x', 'range_note'
+]);
+for (const relPath of MODEL_FILES) {
+    const doc = JSON.parse(readFileSync(join(root, relPath), 'utf8'));
+    for (const [paper, body] of Object.entries(doc)) {
+        for (const [style, rels] of Object.entries(body.fault_types || {})) {
+            for (const [key, segs] of Object.entries(rels)) {
+                segs.forEach((seg, i) => {
+                    for (const k of Object.keys(seg)) {
+                        check(SEGMENT_KEYS.has(k),
+                            `${paper}/${style}/${key}[${i}]: unknown segment key "${k}" - ` +
+                            `add it to SEGMENT_KEYS if intended`);
+                    }
+                });
+                // A segment carrying both sigma fields would have had them
+                // applied on top of each other by the old Monte Carlo path.
+                segs.forEach((seg, i) => {
+                    const both = seg.log10_y_std_dev !== null && seg.log10_y_std_dev !== undefined &&
+                                 seg.std_dev_a !== null && seg.std_dev_a !== undefined;
+                    check(!both,
+                        `${paper}/${style}/${key}[${i}]: declares both log10_y_std_dev and std_dev_a`);
+                });
+            }
         }
     }
 }

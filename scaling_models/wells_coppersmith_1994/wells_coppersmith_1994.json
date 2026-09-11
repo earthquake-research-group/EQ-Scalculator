@@ -28,7 +28,8 @@
             "coefficients": { "a": 4.06, "b": 2.25 },
             "log10_y_std_dev": 0.41,
             "units": { "y": null, "x": "km" },
-            "range_x": [1.1, 350]
+            "range_x": [null, null],
+            "range_note": "range_x in Table 2A is the downdip WIDTH range, not transcribed here. The values previously stored were copied from the subsurface-length relation and claimed validity to 350 km of downdip width. Nulled rather than guessed; no bounds are reported until the width column of Table 2A is transcribed."
           }
         ],
         "Mw_from_A": [
@@ -102,7 +103,8 @@
             "coefficients": { "a": 3.80, "b": 2.59 },
             "log10_y_std_dev": 0.45,
             "units": { "y": null, "x": "km" },
-            "range_x": [1.5, 350]
+            "range_x": [null, null],
+            "range_note": "range_x in Table 2A is the downdip WIDTH range, not transcribed here. The values previously stored were copied from the subsurface-length relation and claimed validity to 350 km of downdip width. Nulled rather than guessed; no bounds are reported until the width column of Table 2A is transcribed."
           }
         ],
         "Mw_from_A": [
@@ -176,7 +178,8 @@
             "coefficients": { "a": 4.37, "b": 1.95 },
             "log10_y_std_dev": 0.32,
             "units": { "y": null, "x": "km" },
-            "range_x": [1.1, 80]
+            "range_x": [null, null],
+            "range_note": "range_x in Table 2A is the downdip WIDTH range, not transcribed here. The values previously stored were copied from the subsurface-length relation and claimed validity to 350 km of downdip width. Nulled rather than guessed; no bounds are reported until the width column of Table 2A is transcribed."
           }
         ],
         "Mw_from_A": [
@@ -214,7 +217,8 @@
             "coefficients": { "a": 4.04, "b": 2.11 },
             "log10_y_std_dev": 0.31,
             "units": { "y": null, "x": "km" },
-            "range_x": [3.8, 63]
+            "range_x": [null, null],
+            "range_note": "range_x in Table 2A is the downdip WIDTH range, not transcribed here. The values previously stored were copied from the subsurface-length relation and claimed validity to 350 km of downdip width. Nulled rather than guessed; no bounds are reported until the width column of Table 2A is transcribed."
           }
         ],
         "Mw_from_A": [

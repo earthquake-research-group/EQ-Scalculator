@@ -78,7 +78,7 @@ Context for interpreting it:
 
 ## Related app fixes made with this review
 
-- `js/solver.js` — Monte Carlo previously did `parseFloat("-4.30 to -3.40")` → σ = −4.30 (several orders of magnitude of spurious scatter on every Leonard run). Leonard's `std_dev_a` strings are the paper's *one-standard-deviation range of a* (Table 3 footnote), so σ is now `|hi − lo| / 2` (`parseStdDevA`); plain numeric values (Yang et al. 2020) behave as before.
+- `js/solver.js` — Monte Carlo previously did `parseFloat("-4.30 to -3.40")` → σ = −4.30 (several orders of magnitude of spurious scatter on every Leonard run). Leonard's `std_dev_a` strings are the paper's *one-standard-deviation range of a* (Table 3 footnote), so σ is now `|hi − lo| / 2` (`parseStdDevA`); plain numeric values (Yang et al. 2021) behave as before.
 - `js/solver.js` — inverse solving of a saturated (b = 0) segment, e.g. W→L for interplate SS with W ≥ 17.5 km, returned `Infinity`; it now returns the standard calculation error (length is genuinely unconstrained by a saturated width).
 
 ## Re-verifying

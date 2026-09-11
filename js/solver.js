@@ -105,6 +105,29 @@ function getSegmentDomain(segment, direction) {
 }
 
 /**
+ * Does a value fall inside one segment's domain?
+ *
+ * Bounds are half-open (`min <= v < max`) so that a value sitting exactly on
+ * an internal breakpoint belongs to the upper branch and is matched once, not
+ * twice. The relation's OVERALL upper bound is different: it is a published
+ * limit of applicability, and a value exactly on it is inside the range the
+ * authors state, so callers pass inclusiveMax for that case.
+ *
+ * @param {Object} domain - From getSegmentDomain()
+ * @param {number} value - Input value, in the input variable's space
+ * @param {boolean} [inclusiveMax=false] - Treat the upper bound as inclusive
+ * @returns {boolean}
+ */
+function domainContains(domain, value, inclusiveMax = false) {
+    if (!domain || domain.degenerate) return false;
+    if (domain.min !== null && value < domain.min) return false;
+    if (domain.max !== null) {
+        if (inclusiveMax ? value > domain.max : value >= domain.max) return false;
+    }
+    return true;
+}
+
+/**
  * Validity range of a whole relation in the input variable's space: the union
  * across its segments, which are contiguous by construction.
  *
@@ -156,25 +179,72 @@ function getInputDomain(modelParams, direction) {
  */
 function getTargetSegment(modelParams, convertedInput, direction) {
     if (convertedInput === null) return null;
+    if (!modelParams.length) return null;
 
+    // A saturated segment has no invertible domain, so it can never be matched
+    // on input value; it is only reachable via the fallback below.
     for (const segment of modelParams) {
-        const domain = getSegmentDomain(segment, direction);
-
-        // A saturated segment has no invertible domain, so it can never be
-        // matched on input value; it is only reachable via the fallback below.
-        if (domain.degenerate) continue;
-
-        if ((domain.min === null || convertedInput >= domain.min) &&
-            (domain.max === null || convertedInput < domain.max)) {
+        if (domainContains(getSegmentDomain(segment, direction), convertedInput)) {
             return segment;
         }
     }
 
-    // If no segment found, return first or last based on input value
-    if (!modelParams.length) return null;
+    // Second pass, inclusive at the top: catches a value sitting exactly on the
+    // relation's published upper bound, which is inside the stated range.
+    // Internal breakpoints cannot reach here - the half-open pass above already
+    // assigned them to the upper branch.
+    for (const segment of modelParams) {
+        if (domainContains(getSegmentDomain(segment, direction), convertedInput, true)) {
+            return segment;
+        }
+    }
 
-    const firstRangeX = (modelParams[0].range_x || [0])[0];
-    return convertedInput < firstRangeX ? modelParams[0] : modelParams[modelParams.length - 1];
+    // Outside every segment: extrapolate the NEAREST branch, measured in the
+    // input variable's own space. range_x is stated in X, so on an inverse
+    // solve it has to be mapped through the forward equation before comparing -
+    // testing a Y-space input against an X-space bound sent sub-floor inputs to
+    // the saturated high-magnitude branch and returned negative magnitudes.
+    //
+    // "Nearest" rather than "first or last" also covers a value landing in a
+    // gap between segments, which published rounding can open up.
+    const first = modelParams[0];
+    const last = modelParams[modelParams.length - 1];
+
+    let nearest = null;
+    let below = true;   // is the input below every invertible segment?
+    let above = true;   // is it above every invertible segment?
+
+    for (const segment of modelParams) {
+        const domain = getSegmentDomain(segment, direction);
+        if (domain.degenerate) continue;
+
+        let distance = null;
+        if (domain.min !== null && convertedInput < domain.min) {
+            distance = domain.min - convertedInput;
+            above = false;
+        } else if (domain.max !== null && convertedInput > domain.max) {
+            distance = convertedInput - domain.max;
+            below = false;
+        } else {
+            // Unbounded on the relevant side: this segment already covers it.
+            return segment;
+        }
+
+        if (nearest === null || distance < nearest.distance) {
+            nearest = { distance, segment };
+        }
+    }
+
+    // A saturated branch (b = 0) genuinely cannot be inverted: every X maps to
+    // the same Y, so an input beyond it is not an extrapolation to attempt but
+    // a question with no unique answer. Where the outermost segment on the side
+    // the input lies is saturated, hand it back so the solver refuses rather
+    // than inventing a length from a width that stopped growing. Segments are
+    // ordered by range_x, so "outermost" is first or last.
+    if (above && getSegmentDomain(last, direction).degenerate) return last;
+    if (below && getSegmentDomain(first, direction).degenerate) return first;
+
+    return nearest ? nearest.segment : last;
 }
 
 /**
@@ -239,18 +309,11 @@ function checkIfExtrapolating(modelParams, inputVal, inputUnit, direction = 'for
         const convertedInput = modelInputUnit ? 
             convertUnits(inputVal, inputUnit, modelInputUnit) : inputVal;
         
-        let isWithinAnyRange = false;
-
-        for (const segment of modelParams) {
-            const domain = getSegmentDomain(segment, direction);
-            if (domain.degenerate) continue;
-
-            if ((domain.min === null || convertedInput >= domain.min) &&
-                (domain.max === null || convertedInput < domain.max)) {
-                isWithinAnyRange = true;
-                break;
-            }
-        }
+        // Inclusive at the top: a value sitting exactly on the published upper
+        // bound is inside the range the authors state, not an extrapolation.
+        const isWithinAnyRange = modelParams.some(
+            segment => domainContains(getSegmentDomain(segment, direction), convertedInput, true)
+        );
 
         if (!isWithinAnyRange) {
             return "Warning: Input is outside the model's recommended validity range. Result is an extrapolation.";
@@ -264,7 +327,7 @@ function checkIfExtrapolating(modelParams, inputVal, inputUnit, direction = 'for
 
 /**
  * Parse a std_dev_a field into a standard deviation.
- * Numeric values are used as-is (e.g. Yang et al. 2020). Leonard (2014)
+ * Numeric values are used as-is (e.g. Yang et al. 2021). Leonard (2014)
  * stores the one-standard-deviation RANGE of the intercept as a string
  * (e.g. "-4.30 to -3.40" or "6.29-6.69"), so sigma is half the range
  * width, regardless of the order the bounds are written in.
@@ -283,66 +346,178 @@ function parseStdDevA(value) {
 }
 
 /**
- * Solve one simulation run with optional uncertainty
+ * Which space each side of an equation form lives in.
+ *
+ * A published sigma always describes scatter in the relation's DEPENDENT
+ * variable, in whatever space that variable appears in the equation. For
+ * `Y = a + b*log10(X)` the dependent variable is a magnitude and appears
+ * untransformed, so its sigma is in magnitude units - NOT in log10(Y).
+ * Treating it as log10 scatter raises 10 to the power of a magnitude.
+ *
+ * Verified against every relation in scaling_models/: all 74 relation and
+ * direction pairs that yield a magnitude resolve to 'linear', and all 174
+ * that yield a dimension resolve to 'log10'.
+ */
+const SIGMA_SPACE = {
+    'log10(Y) = a + b * log10(X)': { y: 'log10',  x: 'log10' },
+    'Y = a + b * log10(X)':        { y: 'linear', x: 'log10' },
+    'log10(Y) = a + b * X':        { y: 'log10',  x: 'linear' }
+};
+
+/**
+ * Resolve the regression scatter that applies to one solve, and the space it
+ * is expressed in.
+ *
+ * The segment is resolved first, so piecewise relations report the sigma of
+ * the branch actually used. Solving inversely divides sigma by |b| and moves
+ * it into the independent variable's space - the same Jacobian whether the
+ * paper published total scatter (`log10_y_std_dev`) or the uncertainty on the
+ * intercept (`std_dev_a`). Those two are algebraically the same perturbation:
+ * shifting the intercept by sigma shifts the dependent variable by sigma in
+ * its own space, and inverting a shifted intercept gives sigma/|b|. One code
+ * path therefore covers both.
+ *
+ * @param {Array} modelParams - Array of model segments
+ * @param {number} value - Input value, used to pick the active segment
+ * @param {string} unit - Unit of the input value
+ * @param {string} direction - 'forward' or 'inverse'
+ * @returns {Object|null} {sigma, space: 'linear'|'log10', fromIntercept}, or
+ *                        null when the segment publishes no usable sigma
+ */
+function scatterFor(modelParams, value, unit, direction = 'forward') {
+    if (!modelParams || !modelParams.length) return null;
+
+    try {
+        const xKey = direction === 'forward' ? 'x' : 'y';
+        const modelInputUnit = modelParams[0].units[xKey];
+        const converted = modelInputUnit ? convertUnits(value, unit, modelInputUnit) : value;
+
+        const segment = getTargetSegment(modelParams, converted, direction);
+        if (!segment) return null;
+
+        const spaces = SIGMA_SPACE[segment.equation_form];
+        if (!spaces) return null;
+
+        let sigma = (segment.log10_y_std_dev === null || segment.log10_y_std_dev === undefined)
+            ? null : segment.log10_y_std_dev;
+        let fromIntercept = false;
+
+        if (sigma === null) {
+            // No total scatter published; fall back to the uncertainty on the
+            // intercept (Leonard 2014), which is a narrower quantity.
+            sigma = parseStdDevA(segment.std_dev_a);
+            fromIntercept = sigma !== null;
+        }
+
+        if (sigma === null || !isFinite(sigma) || sigma <= 0) return null;
+
+        if (direction === 'forward') {
+            return { sigma, space: spaces.y, fromIntercept };
+        }
+
+        // A saturated segment carries no information to invert.
+        const b = segment.coefficients.b;
+        if (b === 0) return null;
+
+        return { sigma: sigma / Math.abs(b), space: spaces.x, fromIntercept };
+    } catch (e) {
+        return null;
+    }
+}
+
+/**
+ * Perturb a value by its regression scatter, in the correct space.
+ *
+ * @param {number} value - Deterministic result
+ * @param {Object|null} scatter - From scatterFor()
+ * @param {Function} [rng] - Uniform [0,1) source, for reproducible runs
+ * @returns {number|null} Perturbed value, or null if it cannot be formed
+ */
+function applyScatter(value, scatter, rng = Math.random) {
+    if (value === null || value === undefined || !isFinite(value)) return null;
+    if (!scatter) return value;
+
+    if (scatter.space === 'linear') {
+        return randomNormal(value, scatter.sigma, rng);
+    }
+
+    // log10 space is only meaningful for a positive quantity.
+    if (value <= 0) return null;
+    return Math.pow(10, randomNormal(Math.log10(value), scatter.sigma, rng));
+}
+
+/**
+ * Build a seeded pseudo-random generator, so a published Monte Carlo result
+ * can be reproduced exactly. mulberry32: small, fast and adequate here - this
+ * is uncertainty propagation, not cryptography.
+ *
+ * @param {number|string} seed - Any seed; strings are hashed
+ * @returns {Function} Uniform [0,1) generator
+ */
+function makeRng(seed) {
+    let h = 1779033703 ^ String(seed).length;
+    for (let i = 0; i < String(seed).length; i++) {
+        h = Math.imul(h ^ String(seed).charCodeAt(i), 3432918353);
+        h = (h << 13) | (h >>> 19);
+    }
+    let a = h >>> 0;
+    return function () {
+        a |= 0;
+        a = (a + 0x6D2B79F5) | 0;
+        let t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
+/**
+ * Solve one simulation run with optional uncertainty.
+ *
+ * Scatter is applied to the deterministic result in whichever space the
+ * relation publishes it (see scatterFor), in BOTH directions. Previously this
+ * added log10 scatter to magnitudes - which are already logarithmic - and
+ * skipped model uncertainty entirely on inverse solves.
+ *
  * @param {Array} modelParams - Array of model segments
  * @param {number} inputVal - Input value
  * @param {string} inputUnit - Input unit
  * @param {string} direction - 'forward' or 'inverse'
  * @param {boolean} includeModelUncertainty - Whether to include model uncertainty
+ * @param {Function} [rng] - Uniform [0,1) source, for reproducible runs
  * @returns {Object} {result: number|null, unit: string|null}
  */
-function solveOneSimulationRun(modelParams, inputVal, inputUnit, direction = 'forward', includeModelUncertainty = true) {
+function solveOneSimulationRun(modelParams, inputVal, inputUnit, direction = 'forward',
+                               includeModelUncertainty = true, rng = Math.random) {
     const xKey = direction === 'forward' ? 'x' : 'y';
     const yKey = direction === 'forward' ? 'y' : 'x';
-    
+
     try {
         const modelInputUnit = modelParams[0].units[xKey];
-        const convertedInput = modelInputUnit ? 
+        const convertedInput = modelInputUnit ?
             convertUnits(inputVal, inputUnit, modelInputUnit) : inputVal;
-        
+
         const targetSegment = getTargetSegment(modelParams, convertedInput, direction);
-        
+
         if (!targetSegment) {
             return { result: null, unit: null };
-        }
-        
-        let a = targetSegment.coefficients.a;
-        let b = targetSegment.coefficients.b;
-        
-        // Apply model uncertainty if requested (mirrors Python solve_one_simulation_run)
-        if (includeModelUncertainty) {
-            // Apply std_dev_a noise to intercept coefficient (e.g. Leonard 2014)
-            const stdDevA = parseStdDevA(targetSegment.std_dev_a);
-            if (stdDevA !== null && stdDevA > 0) {
-                a = randomNormal(a, stdDevA);
-            }
-
-            // Apply log10_y_std_dev scatter directly to result (e.g. Wells & Coppersmith 1994)
-            if (targetSegment.log10_y_std_dev !== null &&
-                targetSegment.log10_y_std_dev !== undefined &&
-                direction === 'forward') {
-                const stdDev = targetSegment.log10_y_std_dev;
-                const deterministicResult = _calcEquation(
-                    targetSegment.equation_form, convertedInput, a, b, direction
-                );
-                if (deterministicResult !== null && deterministicResult > 0) {
-                    const log10Y = Math.log10(deterministicResult);
-                    return { result: Math.pow(10, randomNormal(log10Y, stdDev)), unit: targetSegment.units[yKey] };
-                } else {
-                    return { result: null, unit: null };
-                }
-            }
         }
 
         const result = _calcEquation(
             targetSegment.equation_form,
             convertedInput,
-            a,
-            b,
+            targetSegment.coefficients.a,
+            targetSegment.coefficients.b,
             direction
         );
 
-        return { result: result, unit: targetSegment.units[yKey] };
+        if (result === null) return { result: null, unit: null };
+
+        if (!includeModelUncertainty) {
+            return { result: result, unit: targetSegment.units[yKey] };
+        }
+
+        const scatter = scatterFor(modelParams, inputVal, inputUnit, direction);
+        return { result: applyScatter(result, scatter, rng), unit: targetSegment.units[yKey] };
     } catch (e) {
         return { result: null, unit: null };
     }
@@ -376,12 +551,15 @@ function calculateCurve(modelParams, xValues, inputUnit, direction = 'forward') 
  * Generate random number from normal distribution
  * @param {number} mean - Mean of distribution
  * @param {number} stdDev - Standard deviation
+ * @param {Function} [rng] - Uniform [0,1) source; pass a makeRng() closure for
+ *                           a reproducible run. Defaults to Math.random.
  * @returns {number} Random value
  */
-function randomNormal(mean, stdDev) {
-    // Box-Muller transform
-    const u1 = Math.random();
-    const u2 = Math.random();
+function randomNormal(mean, stdDev, rng = Math.random) {
+    // Box-Muller transform. u1 must be non-zero, or log(0) gives -Infinity.
+    let u1 = rng();
+    while (u1 === 0) u1 = rng();
+    const u2 = rng();
     const z0 = Math.sqrt(-2.0 * Math.log(u1)) * Math.cos(2.0 * Math.PI * u2);
     return z0 * stdDev + mean;
 }
