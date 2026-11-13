@@ -22,7 +22,8 @@ Every entry can therefore be cross-derived from the others. `tools/verify_models
 | `A_from_L`, `W_from_L`, `W_from_A` (all styles) | Faithful to Table 3, self-consistent — unchanged |
 | `D_from_A`, `D_from_L`, `D_from_W` (all styles) | Faithful to Table 3, self-consistent — unchanged. **The strike-slip AD↔L coefficients are correct as published.** |
 | `M0_from_A`, `M0_from_L`, `M0_from_W`, `M0_from_L_SR` | Faithful to Table 3, self-consistent — unchanged |
-| `Mw_from_A`, `Mw_from_L`, `Mw_from_W`, `Mw_from_L_SR` | Faithful to Table 4 — unchanged (see quirks below) |
+| `Mw_from_A`, `Mw_from_L`, `Mw_from_W` | Faithful to Table 4 — unchanged (see quirks below) |
+| `Mw_from_L_SR` (SCR Dip-Slip, first segment) | **Corrected** — erratum 3 |
 | `M0_from_D` (all four styles) | **Corrected** — erratum 1 |
 | `Mw_from_D` (SCR Strike-Slip only) | **Corrected** — erratum 2 |
 
@@ -58,6 +59,16 @@ a = (2/3)·18.82 − 6.07 = 6.47      (equivalently: Mw_from_A 4.18 + 2·(a(D_fr
 ```
 
 with S(a) = (2/3)·[18.54, 19.14] − 6.07 = **"6.29-6.69"**. `range_x` restored to the paper's ">0" (the JSON had [0.2, null]).
+
+## Erratum 3 — SCR Dip-Slip `Mw_from_L_SR`, first segment (added 2026-11-13)
+
+Table 4 prints `a = 5.12` for `Mw = a + 0.953·log(L_SR)` (L_SR ≤ 15 km). Three things in the paper give 5.16 instead:
+
+- the text on p. 2956: "which equates to Mw = 5.16 + 0.953 log(L_SR)";
+- Table 3's `log M0 = 12.55 + 1.43·log L_SR` (metres), which converts to `(12.55 + 1.43·3 − 9.1)/1.5 = 5.16`;
+- continuity: at 15 km the second segment gives `4.32 + 1.667·log(15) = 6.281`; 5.16 gives 6.281, whereas 5.12 gives 6.241 (a 0.04 Mw step).
+
+Corrected to **5.16**. This is a reading of the paper's own text and Table 3, not a published erratum.
 
 ## Paper-internal quirks — kept as printed, documented here
 

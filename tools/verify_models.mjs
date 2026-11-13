@@ -465,7 +465,8 @@ const MC_CASES = [
     ['Wells and Coppersmith 1994', 'All', 'Mw_from_A', 500, 'km^2', 'forward'],
     ['Wells and Coppersmith 1994', 'All', 'Mw_from_A', 7.0, null, 'inverse'],
     ['Wells and Coppersmith 1994', 'Strike-Slip', 'Mw_from_AD', 4.5, 'm', 'forward'],
-    ['Stirling et al. 2024', 'Crustal (NZ NSHM 2022 - Preferred)', 'Mw_from_A', 500, 'km^2', 'forward'],
+    ['Somerville 2014', 'SCR - Combined Methods', 'A_from_M0', 1e26, 'dyne.cm', 'forward'],
+    ['Wells and Coppersmith 1994', 'All', 'SRL_from_Mw', 7.0, null, 'forward'],
     ['Thingbaijam et al. 2017', 'Strike-Slip', 'L_from_Mw', 7.0, null, 'forward'],
     ['Thingbaijam et al. 2017', 'Strike-Slip', 'L_from_Mw', 100, 'km', 'inverse'],
     ['Strasser et al. 2010', 'Subduction Interface', 'A_from_Mw', 8.0, null, 'forward'],
@@ -494,6 +495,101 @@ for (const [paper, style, key, probe, unit, dir] of MC_CASES) {
     check(Math.abs(stat.mean - detInSpace) < 4 * sc.sigma / Math.sqrt(stat.n),
         `MC ${paper}/${style}/${key} ${dir}: sample mean ${stat.mean.toFixed(4)} centred on the ` +
         `deterministic result ${detInSpace.toFixed(4)}`);
+}
+
+// ---- 4f. Checks added after verifying the papers against the primary sources ----
+const loadPaper = (file, name) => JSON.parse(readFileSync(join(root, file), 'utf8'))[name].fault_types;
+
+// Stirling et al. (2024) publishes no standard deviation (the paper says the
+// uncertainty in Mw is not addressed), so none may be stored or applied.
+const stirling = loadPaper('scaling_models/stirling_etal_2024/stirling_etal_2024.json', 'Stirling et al. 2024');
+for (const [style, rels] of Object.entries(stirling)) {
+    check(!('log10_y_std_dev' in rels.Mw_from_A[0]) && !('std_dev_a' in rels.Mw_from_A[0]),
+        `Stirling ${style}: stores no sigma (none is published)`);
+    check(scatterForFn(rels.Mw_from_A, 1000, 'km^2', 'forward') === null,
+        `Stirling ${style}: scatterFor returns null`);
+}
+// Equations 10-21 of the paper: C for each branch.
+const STIRLING_C = {
+    'Crustal (NZ NSHM 2022 - Lower)': 4.1, 'Crustal (NZ NSHM 2022 - Preferred)': 4.2, 'Crustal (NZ NSHM 2022 - Upper)': 4.3,
+    'Subduction Interface (NZ NSHM 2022 - Lower)': 3.9, 'Subduction Interface (NZ NSHM 2022 - Preferred)': 4.0,
+    'Subduction Interface (NZ NSHM 2022 - Upper)': 4.1,
+    'Crustal - Alternative (Lower)': 3.9, 'Crustal - Alternative (Mean)': 4.1, 'Crustal - Alternative (Upper)': 4.3,
+    'Subduction Interface - Alternative (Lower)': 3.6, 'Subduction Interface - Alternative (Mean)': 3.9,
+    'Subduction Interface - Alternative (Upper)': 4.1
+};
+check(Object.keys(stirling).length === 12, 'Stirling: twelve branch relations');
+for (const [style, c] of Object.entries(STIRLING_C)) {
+    const seg = stirling[style]?.Mw_from_A?.[0];
+    check(!!seg && seg.coefficients.a === c && seg.coefficients.b === 1, `pin: Stirling ${style} C = ${c}`);
+}
+
+// Wells & Coppersmith (1994): both published directions are present for every
+// pair, and each pins to Tables 2A-2C (all-slip-type rows shown here).
+const wc = loadPaper('scaling_models/wells_coppersmith_1994/wells_coppersmith_1994.json', 'Wells and Coppersmith 1994');
+const WC_ALL = {
+    Mw_from_SRL: [5.08, 1.16, 0.28], SRL_from_Mw: [-3.22, 0.69, 0.22], Mw_from_L: [4.38, 1.49, 0.26], L_from_Mw: [-2.44, 0.59, 0.16],
+    Mw_from_W: [4.06, 2.25, 0.41], W_from_Mw: [-1.01, 0.32, 0.15], Mw_from_A: [4.07, 0.98, 0.24], A_from_Mw: [-3.49, 0.91, 0.24],
+    Mw_from_MD: [6.69, 0.74, 0.40], MD_from_Mw: [-5.46, 0.82, 0.42], Mw_from_AD: [6.93, 0.82, 0.39], AD_from_Mw: [-4.80, 0.69, 0.36],
+    MD_from_SRL: [-1.38, 1.02, 0.41], SRL_from_MD: [1.43, 0.56, 0.31], AD_from_SRL: [-1.43, 0.88, 0.36], SRL_from_AD: [1.61, 0.57, 0.29]
+};
+for (const [key, [a, b, s]] of Object.entries(WC_ALL)) {
+    const seg = wc.All[key]?.[0];
+    check(!!seg && seg.coefficients.a === a && seg.coefficients.b === b && seg.log10_y_std_dev === s,
+        `pin: W&C All ${key} a=${a} b=${b} s=${s}`);
+}
+for (const [style, rels] of Object.entries(wc)) {
+    for (const key of Object.keys(rels)) {
+        const [y, x] = key.split('_from_');
+        check(`${x}_from_${y}` in rels, `W&C ${style}: ${key} has its published opposite-direction regression`);
+    }
+}
+check(Object.values(wc).reduce((n, rels) => n + Object.keys(rels).length, 0) === 56, 'W&C: 56 relations (Tables 2A-2C, significant fits)');
+
+// Model lookup (js/models.js): where both directions are published, the one
+// asked for is used - never the algebraic inverse of the other.
+const lookupCtx = vm.createContext({ Math, console, document: { getElementById: () => null } });
+vm.runInContext(readFileSync(join(root, 'js/models.js'), 'utf8'), lookupCtx);
+const allDocs = Object.assign({}, ...MODEL_FILES.map(f => JSON.parse(readFileSync(join(root, f), 'utf8'))));
+vm.runInContext(`allModels = ${JSON.stringify(allDocs)}`, lookupCtx);
+const findModels = vm.runInContext('findAvailableModels', lookupCtx);
+const findGrouped = vm.runInContext('findAvailableModelsGrouped', lookupCtx);
+for (const key of Object.keys(WC_ALL)) {
+    const [out, inp] = key.split('_from_');
+    const found = Object.values(findModels(inp, out)).filter(m => m.paper === 'Wells and Coppersmith 1994');
+    check(found.length >= 3 && found.every(m => m.direction === 'forward' && m.key === key),
+        `lookup: W&C ${inp} -> ${out} uses the published ${key} regression for every slip type`);
+    check(new Set(found.map(m => m.fault)).size === found.length,
+        `lookup: W&C ${inp} -> ${out} lists each slip type once`);
+}
+const srlAt8 = solve(wc.All.SRL_from_Mw, 8.0, null, 'forward').result;
+check(near(srlAt8, Math.pow(10, -3.22 + 0.69 * 8.0), 1e-6),
+    `solver: W&C Mw 8 -> SRL = ${srlAt8?.toFixed(1)} km from the published regression (the inverted line gave ~329 km)`);
+check(Object.values(findModels('Mw', 'A')).filter(m => m.paper === 'Leonard 2014').every(m => m.direction === 'inverse'),
+    'lookup: papers publishing one direction are still offered inversely (Leonard Mw -> A)');
+const PARAMS = ['Mw', 'M0', 'A', 'L', 'W', 'SRL', 'AD', 'MD'];
+for (const inp of PARAMS) for (const out of PARAMS) {
+    const flat = Object.keys(findModels(inp, out)).sort().join('|');
+    const grouped = Object.values(findGrouped(inp, out)).flatMap(g => Object.keys(g)).sort().join('|');
+    check(flat === grouped, `lookup: grouped and flat model lists agree for ${inp} -> ${out}`);
+}
+
+// Leonard (2014) SCR dip-slip Mw from surface rupture length: 5.16 (text and
+// Table 3), not the 5.12 printed in Table 4, so the two segments meet at 15 km.
+const lsr = faultTypes['SCR Dip-Slip'].Mw_from_L_SR;
+check(lsr[0].coefficients.a === 5.16, 'pin: SCR DS Mw_from_L_SR a = 5.16');
+check(near(evalAt(lsr[0], 15), evalAt(lsr[1], 15), 0.002),
+    `SCR DS Mw_from_L_SR continuous at 15 km (${evalAt(lsr[0], 15).toFixed(3)} vs ${evalAt(lsr[1], 15).toFixed(3)})`);
+check(near(lsr[0].coefficients.a, HK(12.55 + 1.43 * 3), 0.01), 'SCR DS Mw_from_L_SR consistent with Table 3 M0_from_L_SR');
+
+// Somerville (2014), PEER 2014/14 Table 3 intercepts; slope is exactly 2/3.
+const som = loadPaper('scaling_models/somerville_2014/somerville_2014.json', 'Somerville 2014');
+for (const [style, a] of Object.entries({ 'SCR - Aftershock Method': -14.876, 'SCR - Duration Method': -15.028,
+    'SCR - Slip Model Method': -14.934, 'SCR - Combined Methods': -14.946 })) {
+    const seg = som[style].A_from_M0[0];
+    check(seg.coefficients.a === a && near(seg.coefficients.b, 2 / 3, 1e-9) && seg.log10_y_std_dev === 0.20,
+        `pin: Somerville ${style} a=${a}, b=2/3, sigma=0.20`);
+    check(seg.range_x[0] > 0 && seg.range_x[1] === 3.6e27, `Somerville ${style}: data range stated`);
 }
 
 // With model uncertainty off, a simulation run must reproduce the deterministic
