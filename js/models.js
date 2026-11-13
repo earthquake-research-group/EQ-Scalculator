@@ -87,19 +87,27 @@ async function loadAllModels() {
  *
  * @param {string} inputVar - Input parameter
  * @param {string} outputVar - Output parameter
- * @returns {Array} [{ group, modelId, info: {paper, fault, key, direction} }, ...]
+ * @returns {Array} [{ group, modelId, info: {paper, fault, key, direction} }, ...];
+ *                  M0 <-> Mw definitions carry paper 'virtual' plus mwConstant
  */
 function collectModels(inputVar, outputVar) {
     const found = new Map();   // modelId -> entry, in first-seen order
 
-    // Hanks & Kanamori (1979) definition for M0 <-> Mw
+    // Definitions of moment magnitude for M0 <-> Mw. Two conventions are in
+    // use across the papers here, so both are listed (see MW_CONVENTIONS in
+    // units.js); `mwConstant` tells the caller which one an entry stands for.
     if ((inputVar === 'M0' && outputVar === 'Mw') ||
         (inputVar === 'Mw' && outputVar === 'M0')) {
-        found.set('Hanks & Kanamori (1979) Definition', {
-            group: 'Conversions',
-            modelId: 'Hanks & Kanamori (1979) Definition',
-            info: { paper: 'virtual', fault: 'virtual', key: 'virtual', direction: 'virtual' }
-        });
+        for (const convention of MW_CONVENTIONS) {
+            found.set(convention.id, {
+                group: 'Conversions',
+                modelId: convention.id,
+                info: {
+                    paper: 'virtual', fault: 'virtual', key: 'virtual', direction: 'virtual',
+                    mwConstant: convention.constant, provenance: convention.provenance
+                }
+            });
+        }
     }
 
     for (const paperName in allModels) {

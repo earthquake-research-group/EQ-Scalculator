@@ -346,6 +346,26 @@ function parseStdDevA(value) {
 }
 
 /**
+ * Parse a std_dev_a field that holds a published RANGE into its two bounds.
+ *
+ * Leonard (2014) gives, for each intercept, "the one standard deviation range
+ * of a" (Table 3 footnote) - e.g. "3.61-3.73" for a = 3.63. The bounds are
+ * returned in ascending order whichever way the paper prints them.
+ *
+ * @param {number|string|null} value - std_dev_a value from a model segment
+ * @returns {Object|null} {lo, hi}, or null if the field is not a range
+ */
+function parseStdDevARange(value) {
+    if (value === null || value === undefined || typeof value === 'number') return null;
+    const range = String(value).match(/(-?\d+(?:\.\d+)?)\s*(?:to|–|-)\s*(-?\d+(?:\.\d+)?)/);
+    if (!range) return null;
+    const first = parseFloat(range[1]);
+    const second = parseFloat(range[2]);
+    if (!isFinite(first) || !isFinite(second) || first === second) return null;
+    return { lo: Math.min(first, second), hi: Math.max(first, second) };
+}
+
+/**
  * Which space each side of an equation form lives in.
  *
  * A published sigma always describes scatter in the relation's DEPENDENT
@@ -377,12 +397,22 @@ const SIGMA_SPACE = {
  * its own space, and inverting a shifted intercept gives sigma/|b|. One code
  * path therefore covers both.
  *
+ * The two sides are reported separately. A published sigma is symmetric, so
+ * `sigmaMinus` and `sigmaPlus` are equal. A published RANGE of the intercept
+ * (Leonard 2014) is often not centred on the intercept: the sides are then
+ * `a - lo` below and `hi - a` above, exactly as printed, and no symmetry is
+ * assumed. `sigma` stays the half-width of the range, as a one-number summary.
+ * Solving inversely with b > 0 swaps the sides, because a larger intercept
+ * gives a smaller X for the same Y.
+ *
  * @param {Array} modelParams - Array of model segments
  * @param {number} value - Input value, used to pick the active segment
  * @param {string} unit - Unit of the input value
  * @param {string} direction - 'forward' or 'inverse'
- * @returns {Object|null} {sigma, space: 'linear'|'log10', fromIntercept}, or
- *                        null when the segment publishes no usable sigma
+ * @returns {Object|null} {sigma, sigmaMinus, sigmaPlus, space: 'linear'|'log10',
+ *                        fromIntercept}, with sigmaMinus the one-sigma distance
+ *                        below the result and sigmaPlus above it; null when
+ *                        the segment publishes no usable sigma
  */
 function scatterFor(modelParams, value, unit, direction = 'forward') {
     if (!modelParams || !modelParams.length) return null;
@@ -401,28 +431,83 @@ function scatterFor(modelParams, value, unit, direction = 'forward') {
         let sigma = (segment.log10_y_std_dev === null || segment.log10_y_std_dev === undefined)
             ? null : segment.log10_y_std_dev;
         let fromIntercept = false;
+        let minus = sigma;   // one-sigma distance below the dependent variable
+        let plus = sigma;    // ... and above it
 
         if (sigma === null) {
             // No total scatter published; fall back to the uncertainty on the
             // intercept (Leonard 2014), which is a narrower quantity.
             sigma = parseStdDevA(segment.std_dev_a);
             fromIntercept = sigma !== null;
+            minus = sigma;
+            plus = sigma;
+
+            // Where the paper prints a range that contains the intercept, use
+            // its two sides as printed. A range that does not contain the
+            // intercept cannot be read that way and keeps the half-width.
+            const range = parseStdDevARange(segment.std_dev_a);
+            const a = segment.coefficients.a;
+            if (range && range.lo <= a && a <= range.hi) {
+                minus = a - range.lo;
+                plus = range.hi - a;
+                // Decimal bounds leave float dust (3.99 - 3.73 is not exactly
+                // 4.25 - 3.99); treat such a range as the symmetric one it is.
+                if (Math.abs(minus - plus) < 1e-9) {
+                    minus = sigma;
+                    plus = sigma;
+                }
+            }
         }
 
         if (sigma === null || !isFinite(sigma) || sigma <= 0) return null;
 
         if (direction === 'forward') {
-            return { sigma, space: spaces.y, fromIntercept };
+            return { sigma, sigmaMinus: minus, sigmaPlus: plus, space: spaces.y, fromIntercept };
         }
 
         // A saturated segment carries no information to invert.
         const b = segment.coefficients.b;
         if (b === 0) return null;
 
-        return { sigma: sigma / Math.abs(b), space: spaces.x, fromIntercept };
+        // X = (Y - a) / b in the relevant space: raising the dependent side by
+        // d moves X by -d/b. For b > 0 the upper side of the intercept is
+        // therefore the LOWER side of X, and the sides swap.
+        const absB = Math.abs(b);
+        return {
+            sigma: sigma / absB,
+            sigmaMinus: (b > 0 ? plus : minus) / absB,
+            sigmaPlus: (b > 0 ? minus : plus) / absB,
+            space: spaces.x,
+            fromIntercept
+        };
     } catch (e) {
         return null;
     }
+}
+
+/**
+ * Draw one deviate for a scatter, in the scatter's own space.
+ *
+ * A symmetric scatter is an ordinary normal deviate. Where the two sides
+ * differ (a published range that is not centred on its intercept), each side
+ * is sampled separately: with probability 1/2 the deviate is -|z| * sigmaMinus,
+ * otherwise +|z| * sigmaPlus, with z standard normal. The median is then the
+ * published central value and the 16th and 84th percentiles are the published
+ * bounds. That reproduces the three printed numbers and assumes nothing else;
+ * the price is a step in the density at the median, which shows in a histogram
+ * of a strongly off-centre range.
+ *
+ * @param {Object} scatter - From scatterFor()
+ * @param {Function} [rng] - Uniform [0,1) source, for reproducible runs
+ * @returns {number} Deviate to add to the result (or to its log10)
+ */
+function sampleScatterDeviate(scatter, rng = Math.random) {
+    const minus = scatter.sigmaMinus === undefined ? scatter.sigma : scatter.sigmaMinus;
+    const plus = scatter.sigmaPlus === undefined ? scatter.sigma : scatter.sigmaPlus;
+    if (minus === plus) return randomNormal(0, scatter.sigma, rng);
+
+    const z = Math.abs(randomNormal(0, 1, rng));
+    return rng() < 0.5 ? -z * minus : z * plus;
 }
 
 /**
@@ -438,12 +523,35 @@ function applyScatter(value, scatter, rng = Math.random) {
     if (!scatter) return value;
 
     if (scatter.space === 'linear') {
-        return randomNormal(value, scatter.sigma, rng);
+        return value + sampleScatterDeviate(scatter, rng);
     }
 
     // log10 space is only meaningful for a positive quantity.
     if (value <= 0) return null;
-    return Math.pow(10, randomNormal(Math.log10(value), scatter.sigma, rng));
+    return Math.pow(10, Math.log10(value) + sampleScatterDeviate(scatter, rng));
+}
+
+/**
+ * One-standard-deviation bounds on a deterministic result, built in the space
+ * the scatter lives in: additive for a magnitude, multiplicative for a
+ * quantity whose scatter is published in log10. The two sides can differ (see
+ * scatterFor).
+ *
+ * @param {number} value - Deterministic result, in model-native units
+ * @param {Object|null} scatter - From scatterFor()
+ * @returns {Object|null} {lower, upper} in the same units as value, or null
+ */
+function scatterBounds(value, scatter) {
+    if (!scatter || value === null || value === undefined || !isFinite(value)) return null;
+    const minus = scatter.sigmaMinus === undefined ? scatter.sigma : scatter.sigmaMinus;
+    const plus = scatter.sigmaPlus === undefined ? scatter.sigma : scatter.sigmaPlus;
+
+    if (scatter.space === 'linear') {
+        return { lower: value - minus, upper: value + plus };
+    }
+    if (value <= 0) return null;
+    const log10Value = Math.log10(value);
+    return { lower: Math.pow(10, log10Value - minus), upper: Math.pow(10, log10Value + plus) };
 }
 
 /**

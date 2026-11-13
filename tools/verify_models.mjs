@@ -12,7 +12,8 @@
 //      plus spot calculations run through the real js/solver.js and js/units.js.
 //      Background and derivations: scaling_models/leonard_2014/REVIEW.md
 //      Framework: M0 = mu*A*D_Av, W = C1*L^(2/3), D_Av = C2*sqrt(A),
-//      mu = 3.3e10 Pa, Mw = (2/3)*log10(M0[N*m]) - 6.07.
+//      mu = 3.3e10 Pa, Mw = (log10(M0[N*m]) - 9.1) / 1.5 (as the paper states;
+//      (2/3)*log10(M0) - 6.0667, which earlier versions rounded to 6.07).
 //
 // The optional argument overrides only the Leonard file, so the suite can be
 // pointed at a pre-fix copy to confirm it still catches the known errata.
@@ -46,7 +47,9 @@ const EQUATION_FORMS = [
 const faultTypes = JSON.parse(readFileSync(leonardPath, 'utf8'))['Leonard 2014'].fault_types;
 
 const LOG_MU = Math.log10(3.3e10); // 10.5185
-const HK = (logM0) => (2 / 3) * logM0 - 6.07;
+// Leonard's own magnitude definition (2014, Discussion), used for every
+// Table 3 <-> Table 4 consistency check below.
+const HK = (logM0) => (logM0 - 9.1) / 1.5;
 
 let failures = 0;
 let checks = 0;
@@ -549,6 +552,7 @@ check(Object.values(wc).reduce((n, rels) => n + Object.keys(rels).length, 0) ===
 // Model lookup (js/models.js): where both directions are published, the one
 // asked for is used - never the algebraic inverse of the other.
 const lookupCtx = vm.createContext({ Math, console, document: { getElementById: () => null } });
+vm.runInContext(readFileSync(join(root, 'js/units.js'), 'utf8'), lookupCtx);   // MW_CONVENTIONS
 vm.runInContext(readFileSync(join(root, 'js/models.js'), 'utf8'), lookupCtx);
 const allDocs = Object.assign({}, ...MODEL_FILES.map(f => JSON.parse(readFileSync(join(root, f), 'utf8'))));
 vm.runInContext(`allModels = ${JSON.stringify(allDocs)}`, lookupCtx);
@@ -752,29 +756,168 @@ check(boundsChecked > 100, `bound-inclusivity check covered ${boundsChecked} bou
         `W&C All Mw 7 -> A carries model scatter (sd ${stat?.sd.toFixed(3)} in log10; was exactly 0 pre-fix)`);
 }
 
-// The app's M0 <-> Mw conversion must use the same constant the model files
-// were built with, or every route through M0 drifts by a fixed 0.037 Mw.
-// Leonard's own tables are the fixed point: his corrected M0_from_D intercept
-// of 19.36 must map onto his printed Mw_from_D intercept of 6.84.
+// Moment magnitude: two conventions are in use, and both are offered.
+//   Hanks & Kanamori (1979): M = (2/3)*log10(M0 [dyne cm]) - 10.7
+//   Leonard (2014):          Mw = (log10(M0 [N m]) - 9.1) / 1.5
+// They differ by a constant 1/30 of a magnitude unit. Leonard's tables are the
+// fixed point for the second: his corrected M0_from_D intercept of 19.36 must
+// map onto his printed Mw_from_D intercept of 6.84, and a route through his
+// M0 relations must agree with his direct Mw relations.
 {
     const toMw = vm.runInContext('m0ToMw', ctx);
     const toM0 = vm.runInContext('mwToM0', ctx);
-    check(near(toMw(Math.pow(10, 19.36), 'Nm'), 6.84, 0.005),
-        `m0ToMw(10^19.36 Nm) = ${toMw(Math.pow(10, 19.36), 'Nm')?.toFixed(4)}, Leonard's printed ` +
-        `Mw_from_D intercept 6.84 (was 6.873 under the dyne.cm 10.7 constant)`);
-    check(near(vm.runInContext('HK_CONSTANT_NM', ctx), 6.07, 1e-9),
-        'units.js HK_CONSTANT_NM is 6.07, matching the model files and this suite');
-    check(near(toMw(toM0(7.5, 'Nm'), 'Nm'), 7.5, 1e-9), 'Mw -> M0 -> Mw round-trips exactly');
-    check(near(toMw(1e27, 'dyne.cm'), toMw(1e20, 'Nm'), 1e-9),
-        'm0ToMw agrees between dyne.cm and N.m');
+    const C_HK = vm.runInContext('MW_CONSTANT_HANKS_KANAMORI', ctx);
+    const C_LEONARD = vm.runInContext('MW_CONSTANT_LEONARD', ctx);
 
-    // Mw -> M0 -> A must agree with Mw -> A through the same paper.
+    check(near(toMw(1e26, 'dyne.cm', C_HK), (2 / 3) * 26 - 10.7, 1e-9),
+        'm0ToMw (Hanks & Kanamori): 10^26 dyne cm -> (2/3)*26 - 10.7');
+    check(near(toMw(1e19, 'Nm', C_LEONARD), (19 - 9.1) / 1.5, 1e-9),
+        'm0ToMw (Leonard): 10^19 N m -> (19 - 9.1)/1.5');
+    check(near(toMw(1e19, 'Nm', C_HK) - toMw(1e19, 'Nm', C_LEONARD), 1 / 30, 1e-9),
+        'the two conventions differ by 1/30 of a magnitude unit');
+    check(near(toMw(1e26, 'dyne.cm'), toMw(1e26, 'dyne.cm', C_HK), 1e-12),
+        'm0ToMw with no convention given is Hanks & Kanamori');
+    for (const c of [C_HK, C_LEONARD]) {
+        check(near(toMw(toM0(7.5, 'Nm', c), 'Nm', c), 7.5, 1e-9), `Mw -> M0 -> Mw round-trips exactly (C = ${c})`);
+        check(near(toMw(1e27, 'dyne.cm', c), toMw(1e20, 'Nm', c), 1e-9),
+            `m0ToMw agrees between dyne.cm and N.m (C = ${c})`);
+    }
+
+    check(near(toMw(Math.pow(10, 19.36), 'Nm', C_LEONARD), 6.84, 0.005),
+        `m0ToMw(10^19.36 Nm, Leonard) = ${toMw(Math.pow(10, 19.36), 'Nm', C_LEONARD)?.toFixed(4)}, Leonard's printed ` +
+        `Mw_from_D intercept 6.84 (6.873 under the 10.7 constant)`);
+
+    // Mw -> M0 -> A must agree with Mw -> A through the same paper, in that
+    // paper's convention - and must NOT under the other one.
     const ipss = faultTypes['Interplate Strike-Slip'];
-    const viaM0 = solve(ipss.M0_from_A, toM0(7.0, 'Nm'), 'Nm', 'inverse').result / 1e6;
     const direct = solve(ipss.Mw_from_A, 7.0, null, 'inverse').result;
+    const viaM0 = solve(ipss.M0_from_A, toM0(7.0, 'Nm', C_LEONARD), 'Nm', 'inverse').result / 1e6;
     check(near(viaM0 / direct, 1.0, 0.01),
         `Leonard IP-SS Mw 7 -> A agrees via M0 (${viaM0.toFixed(0)} km^2) and directly ` +
-        `(${direct.toFixed(0)} km^2), ratio ${(viaM0 / direct).toFixed(4)} (was 1.09 pre-fix)`);
+        `(${direct.toFixed(0)} km^2) under his own convention, ratio ${(viaM0 / direct).toFixed(4)}`);
+    const viaM0Hk = solve(ipss.M0_from_A, toM0(7.0, 'Nm', C_HK), 'Nm', 'inverse').result / 1e6;
+    check(near(viaM0Hk / direct, Math.pow(10, -1 / 30), 0.01),
+        `under Hanks & Kanamori the same route differs by 10^(-1/30) (ratio ${(viaM0Hk / direct).toFixed(4)})`);
+
+    // Both definitions are listed for M0 <-> Mw, Hanks & Kanamori first, each
+    // carrying its constant; no model ID may contain " - " (the interface
+    // splits IDs there into paper and fault type).
+    for (const [inp, out] of [['M0', 'Mw'], ['Mw', 'M0']]) {
+        const virtual = Object.entries(findModels(inp, out)).filter(([, m]) => m.paper === 'virtual');
+        check(virtual.length === 2 && virtual[0][1].mwConstant === 9.05 && virtual[1][1].mwConstant === 9.1,
+            `lookup: ${inp} -> ${out} offers both moment-magnitude conventions (10.7 form first)`);
+        check(virtual.length > 0 && virtual[0][0] === 'Hanks & Kanamori (1979) Definition',
+            `lookup: ${inp} -> ${out} keeps the Hanks & Kanamori model ID`);
+        check(virtual.every(([id, m]) => !id.includes(' - ') && typeof m.provenance === 'string'),
+            `lookup: ${inp} -> ${out} definition IDs are safe to split and carry a provenance line`);
+    }
+    check(Object.values(findModels('Mw', 'A')).every(m => m.paper !== 'virtual'),
+        'lookup: the definitions are offered for M0 <-> Mw only');
+}
+
+// ---- 4h-2. Leonard intercept ranges: the two sides as printed ----
+//
+// Table 3 gives "the one standard deviation range of a", and the range is
+// often not centred on a (Interplate dip-slip Mw from W: a = 3.63, range
+// 3.61-3.73). The solver takes each side as printed instead of assuming a
+// symmetric normal on the half-width, so the median of a Monte Carlo run is
+// the published central value and its 16th and 84th percentiles are the
+// published bounds.
+{
+    const parseRange = vm.runInContext('parseStdDevARange', ctx);
+    const boundsFn = vm.runInContext('scatterBounds', ctx);
+    check(JSON.stringify(parseRange('-5.02 to -5.60')) === JSON.stringify({ lo: -5.6, hi: -5.02 }),
+        'parseStdDevARange orders the bounds ("-5.02 to -5.60")');
+    check(JSON.stringify(parseRange('3.61-3.73')) === JSON.stringify({ lo: 3.61, hi: 3.73 }),
+        'parseStdDevARange("3.61-3.73")');
+    check(parseRange(0.12) === null && parseRange(null) === null,
+        'parseStdDevARange leaves a numeric sigma (Yang et al. 2021) and null alone');
+
+    // Every published range contains its intercept, and scatterFor reports
+    // the two sides exactly as printed, forward and inverse.
+    let rangeChecked = 0, offCentre = 0;
+    for (const [style, rels] of Object.entries(faultTypes)) {
+        for (const [key, segs] of Object.entries(rels)) {
+            segs.forEach((seg, i) => {
+                const range = parseRange(seg.std_dev_a);
+                if (!range) return;
+                const { a, b } = seg.coefficients;
+                const where = `Leonard ${style}/${key}[${i}]`;
+                check(range.lo <= a && a <= range.hi,
+                    `${where}: intercept ${a} lies inside its published range ${range.lo} to ${range.hi}`);
+                const below = a - range.lo, above = range.hi - a;
+                // Offset of the intercept from the middle of its range, as a
+                // fraction of the half-width: |above - below| / (above + below).
+                if (Math.abs(above - below) / (above + below) > 0.25) offCentre++;
+
+                // Probe inside this segment, in X (model-native units).
+                const [lo, hi] = seg.range_x;
+                const x = lo !== null && hi !== null ? (lo > 0 ? Math.sqrt(lo * hi) : hi / 2)
+                        : lo !== null ? (lo > 0 ? lo * 2 : 1000) : hi / 2;
+                const sc = scatterForFn([seg], x, seg.units.x, 'forward');
+                check(sc !== null && near(sc.sigmaMinus, below, 1e-9) && near(sc.sigmaPlus, above, 1e-9) &&
+                      near(sc.sigma, (range.hi - range.lo) / 2, 1e-9),
+                    `${where}: forward sides are a - lo = ${below.toFixed(3)} and hi - a = ${above.toFixed(3)}`);
+                rangeChecked++;
+                if (b === 0) return;
+
+                // Inverse: the bounds must equal solving with the intercept
+                // set to each end of its range.
+                const y = solve([seg], x, seg.units.x, 'forward').result;
+                const scInv = scatterForFn([seg], y, seg.units.y, 'inverse');
+                const bInv = boundsFn(x, scInv);
+                const withA = (aNew) => solve([{ ...seg, coefficients: { a: aNew, b } }], y, seg.units.y, 'inverse').result;
+                const ends = [withA(range.lo), withA(range.hi)].sort((p, q) => p - q);
+                check(bInv !== null && near(bInv.lower / ends[0], 1, 1e-6) && near(bInv.upper / ends[1], 1, 1e-6),
+                    `${where}: inverse one-sigma bounds equal the solve at each end of the intercept range`);
+            });
+        }
+    }
+    check(rangeChecked === 74, `Leonard: ${rangeChecked} segments carry an intercept range (74 expected)`);
+    console.log(`NOTE  Leonard: in ${offCentre} of ${rangeChecked} intercept ranges the intercept sits more than 25% of the half-width off-centre.`);
+
+    // Monte Carlo percentiles against the printed bounds. The second and third
+    // cases are strongly off-centre.
+    const pct = (xs, q) => [...xs].sort((u, v) => u - v)[Math.floor(xs.length * q)];
+    const CASES = [
+        ['Interplate Dip-Slip', 'Mw_from_A', 500, 'km^2'],    // a = 4.00, range 3.73 to 4.33
+        ['Interplate Dip-Slip', 'Mw_from_W', 15, 'km'],       // a = 3.63, range 3.61 to 3.73
+        ['SCR Strike-Slip', 'Mw_from_W', 10, 'km']            // a = 4.22, range 4.17 to 4.23
+    ];
+    for (const [style, key, x, unit] of CASES) {
+        const segs = faultTypes[style][key];
+        const seg = segs[segs.length - 1];
+        const range = parseRange(seg.std_dev_a);
+        const below = seg.coefficients.a - range.lo, above = range.hi - seg.coefficients.a;
+        const det = solve(segs, x, unit, 'forward').result;
+        const rng = makeRng(`asym:${style}:${key}`);
+        const draws = Array.from({ length: 60000 }, () => mcRun(segs, x, unit, 'forward', true, rng).result);
+        const tol = 0.03 * (below + above) + 0.002;
+        check(near(pct(draws, 0.50), det, tol) && near(pct(draws, 0.16), det - below, tol) &&
+              near(pct(draws, 0.84), det + above, tol),
+            `MC ${style}/${key}: 16th/50th/84th percentiles ${pct(draws, 0.16).toFixed(3)}/` +
+            `${pct(draws, 0.50).toFixed(3)}/${pct(draws, 0.84).toFixed(3)} match the published ` +
+            `${(det - below).toFixed(3)}/${det.toFixed(3)}/${(det + above).toFixed(3)}`);
+        const bnd = boundsFn(det, scatterForFn(segs, x, unit, 'forward'));
+        check(near(bnd.lower, det - below, 1e-9) && near(bnd.upper, det + above, 1e-9),
+            `bounds ${style}/${key}: ${bnd.lower.toFixed(3)} to ${bnd.upper.toFixed(3)} are the published range`);
+    }
+
+    // A symmetric sigma is still an ordinary normal: check the tails as well
+    // as the spread (Wells & Coppersmith Mw from SRL, s = 0.28).
+    const wcSRL = JSON.parse(readFileSync(
+        join(root, 'scaling_models/wells_coppersmith_1994/wells_coppersmith_1994.json'), 'utf8')
+    )['Wells and Coppersmith 1994'].fault_types.All.Mw_from_SRL;
+    const sc = scatterForFn(wcSRL, 50, 'km', 'forward');
+    check(sc.sigmaMinus === 0.28 && sc.sigmaPlus === 0.28, 'W&C Mw_from_SRL: a published sigma has equal sides');
+    const det = solve(wcSRL, 50, 'km', 'forward').result;
+    const rng = makeRng('symmetric-tails');
+    const draws = Array.from({ length: 60000 }, () => mcRun(wcSRL, 50, 'km', 'forward', true, rng).result);
+    const beyond2 = draws.filter(d => Math.abs(d - det) > 2 * 0.28).length / draws.length;
+    const belowDet = draws.filter(d => d < det).length / draws.length;
+    check(near(beyond2, 0.0455, 0.004) && near(belowDet, 0.5, 0.01),
+        `W&C Mw_from_SRL: ${(beyond2 * 100).toFixed(2)}% of draws beyond two sigma (4.55% expected), ` +
+        `${(belowDet * 100).toFixed(1)}% below the central value`);
 }
 
 // ---- 4i. Structural: distinct parameters must not share a validity range ----

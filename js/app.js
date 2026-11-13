@@ -241,7 +241,13 @@ function updateMCModelList() {
 
     // Flatten to count total models for default weight calculation
     const allModelIds = Object.values(groupedModels).flatMap(g => Object.keys(g));
-    const defaultWeight = allModelIds.length > 0 ? Math.floor(100 / allModelIds.length) : 0;
+    // Equal weights, to two decimals. They need not total exactly 100: weights
+    // are relative and are normalised when the simulation runs. The earlier
+    // floor(100 / n) left the 29 area-to-magnitude models at 3% each, a total
+    // of 87%, and the Run button stayed disabled until the weights were edited
+    // by hand; 24 of the 40 parameter pairs were affected.
+    const defaultWeight = allModelIds.length > 0
+        ? Math.round(10000 / allModelIds.length) / 100 : 0;
 
     let index = 0;
     for (const groupLabel in groupedModels) {
@@ -275,6 +281,7 @@ function updateMCModelList() {
             weightInput.type = 'number';
             weightInput.min = 0;
             weightInput.max = 100;
+            weightInput.step = 'any';
             weightInput.value = defaultWeight;
             weightInput.dataset.modelId = modelId;
             weightInput.oninput = updateTotalWeight;
@@ -303,21 +310,29 @@ function updateTotalWeight() {
     
     selectedModelsWeights = {};
     
+    let hasNegative = false;
     inputs.forEach(input => {
         const checkbox = input.parentElement.querySelector('input[type="checkbox"]');
         if (checkbox.checked) {
             const weight = parseFloat(input.value) || 0;
+            if (weight < 0) hasNegative = true;
             total += weight;
             selectedModelsWeights[input.dataset.modelId] = weight;
         }
     });
     
+    // Weights are relative: runMonteCarlo divides each by their sum. Equal
+    // defaults can miss 100 by rounding (three models at 33.33%), so anything
+    // within half a percent is shown as 100%.
+    const sumsTo100 = Math.abs(total - 100) < 0.5;
     const totalElem = document.getElementById('totalWeight');
-    totalElem.textContent = `${total}%`;
-    totalElem.style.color = total === 100 ? 'white' : '#fbbf24';
+    totalElem.textContent = sumsTo100
+        ? '100%'
+        : `${Math.round(total * 100) / 100}% (normalised to 100% when run)`;
+    totalElem.style.color = sumsTo100 ? '' : 'var(--warn)';
     
     const runBtn = document.getElementById('mcRunBtn');
-    runBtn.disabled = total !== 100 || Object.keys(selectedModelsWeights).length === 0;
+    runBtn.disabled = hasNegative || !(total > 0) || Object.keys(selectedModelsWeights).length === 0;
 }
 
 function toggleModelUncertainty(element) {
@@ -395,14 +410,14 @@ function calculateSingle() {
     let result, resultUnit, warning = null;
     
     try {
-        // Handle Hanks & Kanamori conversion
-        if (selectedModelId === 'Hanks & Kanamori (1979) Definition') {
-            console.log('Using Hanks & Kanamori conversion');
+        // M0 <-> Mw by definition, in the convention the selected entry stands for
+        if (modelInfo.paper === 'virtual') {
+            console.log('Using moment magnitude definition:', selectedModelId);
             if (inputParam === 'M0') {
-                result = m0ToMw(inputValue, inputUnit);
+                result = m0ToMw(inputValue, inputUnit, modelInfo.mwConstant);
                 resultUnit = null;
             } else {
-                result = mwToM0(inputValue, inputUnit === 'N/A' ? 'Nm' : inputUnit);
+                result = mwToM0(inputValue, inputUnit === 'N/A' ? 'Nm' : inputUnit, modelInfo.mwConstant);
                 resultUnit = 'Nm';
             }
         } else {
@@ -492,7 +507,8 @@ function describeDomain(domain, param, displayUnit) {
  */
 function buildProvenance(modelInfo, inputValue, inputUnit) {
     if (!modelInfo || modelInfo.paper === 'virtual') {
-        return '<div class="provenance">Hanks &amp; Kanamori (1979) moment magnitude definition</div>';
+        const text = (modelInfo && modelInfo.provenance) || 'Moment magnitude definition';
+        return `<div class="provenance">${escapeHtml(text)}</div>`;
     }
 
     const parts = [escapeHtml(modelInfo.paper), escapeHtml(modelInfo.fault)];
@@ -619,6 +635,10 @@ function calculateBatch() {
     
     const models = findAvailableModels(inputParam, outputParam);
     const modelInfo = models[selectedModelId];
+    if (!modelInfo) {
+        showError('detResults', 'Selected model not found. Please choose another model.');
+        return;
+    }
     
     const outputColumnName = `${outputParam}_${outputUnit}`;
     
@@ -630,12 +650,12 @@ function calculateBatch() {
         
         let result, resultUnit;
         
-        if (selectedModelId === 'Hanks & Kanamori (1979) Definition') {
+        if (modelInfo.paper === 'virtual') {
             if (inputParam === 'M0') {
-                result = m0ToMw(inputValue, inputUnit);
+                result = m0ToMw(inputValue, inputUnit, modelInfo.mwConstant);
                 resultUnit = null;
             } else {
-                result = mwToM0(inputValue, 'Nm');
+                result = mwToM0(inputValue, 'Nm', modelInfo.mwConstant);
                 resultUnit = 'Nm';
             }
         } else {
@@ -708,6 +728,20 @@ function runMonteCarlo() {
     const uncType = document.querySelector('input[name="uncType"]:checked').value;
     const uncValue = parseFloat(document.getElementById('mcUncertainty').value);
     
+    // Validate before running, so a failure names its cause
+    if (isNaN(inputValue)) {
+        showError('mcResults', 'Please enter a valid numeric input value.');
+        return;
+    }
+    if (!Number.isInteger(numSims) || numSims < 1 || numSims > MAX_MC_SIMULATIONS) {
+        showError('mcResults', `Number of simulations must be a whole number between 1 and ${MAX_MC_SIMULATIONS}.`);
+        return;
+    }
+    if (uncType !== 'none' && !(uncValue >= 0)) {
+        showError('mcResults', 'Enter the input uncertainty as zero or a positive number, or choose no input uncertainty.');
+        return;
+    }
+
     const resultsDiv = document.getElementById('mcResults');
     resultsDiv.innerHTML = '<div class="spinner"></div>';
     
@@ -715,7 +749,18 @@ function runMonteCarlo() {
         const results = [];
         const models = findAvailableModels(inputParam, outputParam);
         const modelIds = Object.keys(selectedModelsWeights);
-        const weights = modelIds.map(id => selectedModelsWeights[id] / 100);
+        // Weights are relative: normalise them so they sum to 1
+        const weightSum = modelIds.reduce((sum, id) => sum + selectedModelsWeights[id], 0);
+        const weights = modelIds.map(id => selectedModelsWeights[id] / weightSum);
+
+        // Bookkeeping reported with the results
+        const diagnostics = {
+            requested: numSims,
+            failed: 0,             // draws with no valid result (e.g. a non-positive sampled input)
+            extrapolated: 0,       // draws whose sampled input lay outside the model's stated range
+            noSigma: new Set(),    // selected models whose source gives no uncertainty
+            modelUncertainty: includeModelUncertainty
+        };
         
         for (let i = 0; i < numSims; i++) {
             // Apply input uncertainty
@@ -742,12 +787,12 @@ function runMonteCarlo() {
             const modelInfo = models[selectedModelId];
             let result, resultUnit;
             
-            if (selectedModelId === 'Hanks & Kanamori (1979) Definition') {
+            if (modelInfo.paper === 'virtual') {
                 if (inputParam === 'M0') {
-                    result = m0ToMw(currentInput, inputUnit);
+                    result = m0ToMw(currentInput, inputUnit, modelInfo.mwConstant);
                     resultUnit = null;
                 } else {
-                    result = mwToM0(currentInput, 'Nm');
+                    result = mwToM0(currentInput, 'Nm', modelInfo.mwConstant);
                     resultUnit = 'Nm';
                 }
             } else {
@@ -756,6 +801,15 @@ function runMonteCarlo() {
                     modelInfo.direction, includeModelUncertainty);
                 result = solved.result;
                 resultUnit = solved.unit;
+                if (result !== null) {
+                    if (includeModelUncertainty && !diagnostics.noSigma.has(selectedModelId) &&
+                        scatterFor(params, currentInput, inputUnit, modelInfo.direction) === null) {
+                        diagnostics.noSigma.add(selectedModelId);
+                    }
+                    if (checkIfExtrapolating(params, currentInput, inputUnit, modelInfo.direction)) {
+                        diagnostics.extrapolated++;
+                    }
+                }
             }
             
             if (result !== null) {
@@ -767,26 +821,72 @@ function runMonteCarlo() {
                 if (outputParam === 'Mw' && resultUnit) {
                     result = m0ToMw(result, resultUnit);
                 }
+            }
+            if (result !== null && isFinite(result)) {
                 results.push(result);
+            } else {
+                diagnostics.failed++;
             }
         }
         
-        displayMonteCarloResults(results, outputParam, outputUnit);
+        displayMonteCarloResults(results, outputParam, outputUnit, diagnostics);
     }, 100);
 }
 
-function displayMonteCarloResults(results, outputParam, outputUnit) {
+/** Upper limit on Monte Carlo draws, matching the form's own maximum. */
+const MAX_MC_SIMULATIONS = 50000;
+
+/**
+ * Plain-language notes on what a Monte Carlo distribution does and does not
+ * include, from the bookkeeping gathered during the run.
+ * @param {Object|null} diagnostics - From runMonteCarlo()
+ * @returns {string} HTML for a warning box, or '' when there is nothing to say
+ */
+function buildMonteCarloNotes(diagnostics) {
+    if (!diagnostics) return '';
+    const notes = [];
+
+    if (diagnostics.failed > 0) {
+        notes.push(`${diagnostics.failed} of ${diagnostics.requested} draws gave no valid result and were ` +
+            `discarded (typically a sampled input at or below zero). The statistics describe the remaining ` +
+            `draws only, which truncates the input distribution.`);
+    }
+    if (diagnostics.extrapolated > 0) {
+        notes.push(`${diagnostics.extrapolated} of ${diagnostics.requested} draws used an input outside ` +
+            `the selected model's stated validity range (extrapolation).`);
+    }
+    if (diagnostics.modelUncertainty && diagnostics.noSigma.size > 0) {
+        notes.push(`No model uncertainty was applied for: ` +
+            `${[...diagnostics.noSigma].map(escapeHtml).join('; ')}. The source gives no standard deviation ` +
+            `for the relation or segment used, so these draws are deterministic and the spread shown is ` +
+            `too narrow.`);
+    }
+
+    if (notes.length === 0) return '';
+    return `<div class="warning"><ul style="margin:0; padding-left:20px;">` +
+        `${notes.map(n => `<li>${n}</li>`).join('')}</ul></div>`;
+}
+
+function displayMonteCarloResults(results, outputParam, outputUnit, diagnostics = null) {
     if (results.length === 0) {
-        showError('mcResults', 'Simulation failed for all runs.');
+        showError('mcResults', 'Simulation failed for all runs. Check that the input value is ' +
+            'greater than zero where the relation requires it and that the selected models can be evaluated.');
         return;
     }
     
     const mean = results.reduce((a, b) => a + b, 0) / results.length;
     const std = Math.sqrt(results.reduce((sq, n) => sq + Math.pow(n - mean, 2), 0) / results.length);
     const sortedResults = [...results].sort((a, b) => a - b);
-    const p16 = sortedResults[Math.floor(results.length * 0.16)];
-    const p50 = sortedResults[Math.floor(results.length * 0.50)];
-    const p84 = sortedResults[Math.floor(results.length * 0.84)];
+    const percentile = p => sortedResults[Math.min(sortedResults.length - 1, Math.floor(results.length * p))];
+    const p2_5 = percentile(0.025);
+    const p16 = percentile(0.16);
+    const p50 = percentile(0.50);
+    const p84 = percentile(0.84);
+    const p97_5 = percentile(0.975);
+    // The sorted array gives the extremes without spreading it into Math.min/max
+    const minVal = sortedResults[0];
+    const maxVal = sortedResults[sortedResults.length - 1];
+    const notesHtml = buildMonteCarloNotes(diagnostics);
     
     const trace = {
         x: results,
@@ -810,6 +910,7 @@ function displayMonteCarloResults(results, outputParam, outputUnit) {
         <div class="result-box">
             <h3>Simulation Results</h3>
             <div id="mcPlot" style="width: 100%; height: 400px;"></div>
+            ${notesHtml}
             <h3 style="margin-top: 30px;">Summary Statistics for ${outputParam}${unitDisplay}</h3>
             <table class="stat-table">
                 <thead>
@@ -822,11 +923,13 @@ function displayMonteCarloResults(results, outputParam, outputUnit) {
                     <tr><td>Count</td><td>${results.length}</td></tr>
                     <tr><td>Mean</td><td>${formatQuantity(mean, outputParam)}</td></tr>
                     <tr><td>Std Dev</td><td>${formatQuantity(std, outputParam)}</td></tr>
-                    <tr><td>Min</td><td>${formatQuantity(Math.min(...results), outputParam)}</td></tr>
+                    <tr><td>Min</td><td>${formatQuantity(minVal, outputParam)}</td></tr>
+                    <tr><td>2.5th Percentile</td><td>${formatQuantity(p2_5, outputParam)}</td></tr>
                     <tr><td>16th Percentile</td><td>${formatQuantity(p16, outputParam)}</td></tr>
                     <tr><td>50th Percentile (Median)</td><td>${formatQuantity(p50, outputParam)}</td></tr>
                     <tr><td>84th Percentile</td><td>${formatQuantity(p84, outputParam)}</td></tr>
-                    <tr><td>Max</td><td>${formatQuantity(Math.max(...results), outputParam)}</td></tr>
+                    <tr><td>97.5th Percentile</td><td>${formatQuantity(p97_5, outputParam)}</td></tr>
+                    <tr><td>Max</td><td>${formatQuantity(maxVal, outputParam)}</td></tr>
                 </tbody>
             </table>
         </div>
@@ -933,9 +1036,9 @@ function updatePlot() {
             const modelInfo = models[modelId];
             
             if (modelInfo.paper === 'virtual') {
-                // Handle Hanks & Kanamori separately
+                // M0 <-> Mw by definition: no model file, just the convention's constant
                 if (xParam === 'Mw' && yParam === 'M0') {
-                    const yValues = xValues.map(mw => mwToM0(mw, yUnit || 'Nm'));
+                    const yValues = xValues.map(mw => mwToM0(mw, yUnit || 'Nm', modelInfo.mwConstant));
                     traces.push({
                         x: xValues,
                         y: yValues,
@@ -945,7 +1048,7 @@ function updatePlot() {
                     });
                     validTraces++;
                 } else if (xParam === 'M0' && yParam === 'Mw') {
-                    const yValues = xValues.map(m0 => m0ToMw(m0, xUnit || 'Nm'));
+                    const yValues = xValues.map(m0 => m0ToMw(m0, xUnit || 'Nm', modelInfo.mwConstant));
                     traces.push({
                         x: xValues,
                         y: yValues,
@@ -1152,10 +1255,10 @@ function runComparison() {
 
                 if (modelInfo.paper === 'virtual') {
                     if (inputParam === 'M0') {
-                        result = m0ToMw(inputValue, inputUnit);
+                        result = m0ToMw(inputValue, inputUnit, modelInfo.mwConstant);
                         resultUnit = null;
                     } else {
-                        result = mwToM0(inputValue, 'Nm');
+                        result = mwToM0(inputValue, 'Nm', modelInfo.mwConstant);
                         resultUnit = 'Nm';
                     }
                 } else {
@@ -1201,18 +1304,16 @@ function runComparison() {
                 // scatter is published in log10. Building every band in log10
                 // raised 10 to the power of a magnitude, which printed a +-1
                 // sigma range of 3.86-11.67 Mw on a result of 6.71.
+                //
+                // scatterBounds takes the two sides separately: a published
+                // range of the intercept (Leonard 2014) need not be centred on
+                // it, so the lower and upper bounds can sit at different
+                // distances from the result.
                 let sigmaLower = null, sigmaUpper = null;
                 if (scatter !== null && result !== null) {
-                    let rawLower = null, rawUpper = null;
-
-                    if (scatter.space === 'linear') {
-                        rawLower = result - scatter.sigma;
-                        rawUpper = result + scatter.sigma;
-                    } else if (result > 0) {
-                        const log10Result = Math.log10(result);
-                        rawLower = Math.pow(10, log10Result - scatter.sigma);
-                        rawUpper = Math.pow(10, log10Result + scatter.sigma);
-                    }
+                    const rawBounds = scatterBounds(result, scatter);
+                    const rawLower = rawBounds ? rawBounds.lower : null;
+                    const rawUpper = rawBounds ? rawBounds.upper : null;
 
                     if (rawLower !== null) {
                         try {
@@ -1330,7 +1431,8 @@ function displayComparisonResults(rows, inputParam, outputParam, inputValue, inp
         tableHtml += `<p class="cmp-footnote">† Uncertainty on the regression intercept, which the
             source publishes in place of the total scatter in log₁₀(Y) reported by the other models.
             It is the narrower quantity, so these intervals are not directly comparable with the rest
-            of the column.</p>`;
+            of the column. The bounds are the published one-standard-deviation range of the intercept,
+            which need not be centred on it, so the two sides can differ.</p>`;
     }
 
     tableHtml += `<p class="cmp-footnote">A validity range is the range of applicability claimed by
@@ -1610,10 +1712,10 @@ function runChain() {
 
         if (modelInfo.paper === 'virtual') {
             if (currentParam === 'M0') {
-                result = m0ToMw(currentValue, currentUnit);
+                result = m0ToMw(currentValue, currentUnit, modelInfo.mwConstant);
                 resultUnit = null;
             } else {
-                result = mwToM0(currentValue, 'Nm');
+                result = mwToM0(currentValue, 'Nm', modelInfo.mwConstant);
                 resultUnit = 'Nm';
             }
         } else {
