@@ -1,6 +1,6 @@
 {
   "Somerville 2014": {
-    "description": "Scaling relations between seismic moment and rupture area of earthquakes in stable continental regions from Somerville (2014), PEER Report 2014/14. Three independent estimates of rupture area (aftershock, duration and slip-model methods) plus their combination; all share the self-similar slope b = 2/3.",
+    "description": "Scaling relations between seismic moment and rupture area of earthquakes in stable continental regions from Somerville (2014), PEER Report 2014/14. Three independent estimates of rupture area (aftershock, duration and slip-model methods) plus their combination; all share the self-similar slope b = 2/3. Checked against the report: intercepts from Table 3, standard deviation of log10 area (0.20) from Table 5, where it is given for the combined models only. The report itself recommends the Leonard (2010) SCR relations for the NGA-East Project and presents these relations as not significantly different from them.",
     "citation": "Somerville, P. G. (2014). Scaling Relations between Seismic Moment and Rupture Area of Earthquakes in Stable Continental Regions. PEER Report 2014/14, Pacific Earthquake Engineering Research Center, University of California, Berkeley.",
     "fault_types": {
       "SCR - Aftershock Method": {
@@ -10,17 +10,18 @@
             "equation_form": "log10(Y) = a + b * log10(X)",
             "coefficients": {
               "a": -14.876,
-              "b": 0.66667
+              "b": 0.6666666667
             },
-            "log10_y_std_dev": 0.20,
+            "log10_y_std_dev": 0.2,
             "units": {
               "x": "dyne.cm",
               "y": "km^2"
             },
             "range_x": [
-              null,
-              null
-            ]
+              1e+24,
+              3.6e+27
+            ],
+            "range_note": "Seismic moment range (dyne.cm) of the events in Table 1 that have an aftershock or surface-rupture area."
           }
         ]
       },
@@ -31,17 +32,18 @@
             "equation_form": "log10(Y) = a + b * log10(X)",
             "coefficients": {
               "a": -15.028,
-              "b": 0.66667
+              "b": 0.6666666667
             },
-            "log10_y_std_dev": 0.20,
+            "log10_y_std_dev": 0.2,
             "units": {
               "x": "dyne.cm",
               "y": "km^2"
             },
             "range_x": [
-              null,
-              null
-            ]
+              6.2e+22,
+              3.6e+27
+            ],
+            "range_note": "Seismic moment range (dyne.cm) of the events in Table 1 that have a source-duration area."
           }
         ]
       },
@@ -52,17 +54,18 @@
             "equation_form": "log10(Y) = a + b * log10(X)",
             "coefficients": {
               "a": -14.934,
-              "b": 0.66667
+              "b": 0.6666666667
             },
-            "log10_y_std_dev": 0.20,
+            "log10_y_std_dev": 0.2,
             "units": {
               "x": "dyne.cm",
               "y": "km^2"
             },
             "range_x": [
-              null,
-              null
-            ]
+              2e+24,
+              3.6e+27
+            ],
+            "range_note": "Seismic moment range (dyne.cm) of the events in Table 1 that have a slip-model area."
           }
         ]
       },
@@ -73,17 +76,18 @@
             "equation_form": "log10(Y) = a + b * log10(X)",
             "coefficients": {
               "a": -14.946,
-              "b": 0.66667
+              "b": 0.6666666667
             },
-            "log10_y_std_dev": 0.20,
+            "log10_y_std_dev": 0.2,
             "units": {
               "x": "dyne.cm",
               "y": "km^2"
             },
             "range_x": [
-              null,
-              null
-            ]
+              6.2e+22,
+              3.6e+27
+            ],
+            "range_note": "Seismic moment range (dyne.cm) of the all events in Table 1."
           }
         ]
       }

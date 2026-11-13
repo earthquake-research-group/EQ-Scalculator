@@ -1,7 +1,7 @@
 {
   "Thingbaijam et al. 2017": {
     "citation": "Thingbaijam, K. K. S., Mai, P. M., and Goda, K. (2017). New Empirical Earthquake Source-Scaling Laws. Bulletin of the Seismological Society of America, 107(5), 2225-2246. doi: 10.1785/0120170017",
-    "description": "Empirical earthquake source-scaling laws derived using General Orthogonal Regression (GOR) on 250 rupture models from 130 earthquakes (SRCMOD database). Provides scaling relations for rupture length (L), width (W), area (A), and average slip (D) as functions of moment magnitude (Mw) and rupture dimensions. Four faulting regimes: shallow crustal reverse, normal, strike-slip, and subduction interface. All dimension equations are of the form log10(Y) = a + b * Mw.",
+    "description": "Empirical earthquake source-scaling laws derived using General Orthogonal Regression (GOR) on 250 rupture models from 130 earthquakes (SRCMOD database). Provides scaling relations for rupture length (L), width (W), area (A), and average slip (D) as functions of moment magnitude (Mw) and rupture dimensions. Four faulting regimes: shallow crustal reverse, normal, strike-slip, and subduction interface. All dimension equations are of the form log10(Y) = a + b * Mw. All 28 relations were checked against Tables 1 and 2 of the paper. The paper states that general orthogonal regression yields a relationship that is interchangeable (y = f(x) and x = f(y)), so inverting these relations is consistent with the method. The normal-faulting class combines outer-rise and subduction in-slab normal events, so it is not a shallow crustal normal-fault relation. D is the average slip of finite-fault rupture models, not surface displacement.",
     "fault_types": {
       "Reverse": {
         "L_from_Mw": [
@@ -27,6 +27,7 @@
         "A_from_Mw": [
           {
             "source": "Table 1",
+            "description": "Not an independent regression: Table 1 states the magnitude-area coefficients were calculated from those of rupture length and rupture width.",
             "equation_form": "log10(Y) = a + b * X",
             "coefficients": { "a": -4.362, "b": 1.049 },
             "log10_y_std_dev": 0.121,
@@ -47,6 +48,7 @@
         "AD_from_A": [
           {
             "source": "Table 2",
+            "description": "Table 2 gives no data range; range_x is the Table 1 range of the independent variable.",
             "equation_form": "log10(Y) = a + b * log10(X)",
             "coefficients": { "a": -1.213, "b": 0.429 },
             "log10_y_std_dev": 0.180,
@@ -57,6 +59,7 @@
         "AD_from_L": [
           {
             "source": "Table 2",
+            "description": "Table 2 gives no data range; range_x is the Table 1 range of the independent variable.",
             "equation_form": "log10(Y) = a + b * log10(X)",
             "coefficients": { "a": -1.456, "b": 0.975 },
             "log10_y_std_dev": 0.132,
@@ -67,6 +70,7 @@
         "AD_from_W": [
           {
             "source": "Table 2",
+            "description": "Table 2 gives no data range; range_x is the Table 1 range of the independent variable.",
             "equation_form": "log10(Y) = a + b * log10(X)",
             "coefficients": { "a": -1.022, "b": 0.767 },
             "log10_y_std_dev": 0.200,
@@ -99,6 +103,7 @@
         "A_from_Mw": [
           {
             "source": "Table 1",
+            "description": "Not an independent regression: Table 1 states the magnitude-area coefficients were calculated from those of rupture length and rupture width.",
             "equation_form": "log10(Y) = a + b * X",
             "coefficients": { "a": -2.551, "b": 0.808 },
             "log10_y_std_dev": 0.181,
@@ -119,6 +124,7 @@
         "AD_from_A": [
           {
             "source": "Table 2",
+            "description": "Table 2 gives no data range; range_x is the Table 1 range of the independent variable. Weak relation: r2 = 0.29 in Table 2.",
             "equation_form": "log10(Y) = a + b * log10(X)",
             "coefficients": { "a": -2.779, "b": 0.858 },
             "log10_y_std_dev": 0.330,
@@ -129,6 +135,7 @@
         "AD_from_L": [
           {
             "source": "Table 2",
+            "description": "Table 2 gives no data range; range_x is the Table 1 range of the independent variable. Weak relation: r2 = 0.43 in Table 2.",
             "equation_form": "log10(Y) = a + b * log10(X)",
             "coefficients": { "a": -2.302, "b": 1.302 },
             "log10_y_std_dev": 0.252,
@@ -139,6 +146,7 @@
         "AD_from_W": [
           {
             "source": "Table 2",
+            "description": "Table 2 gives no data range; range_x is the Table 1 range of the independent variable. Weak relation: r2 = 0.00 in Table 2.",
             "equation_form": "log10(Y) = a + b * log10(X)",
             "coefficients": { "a": -3.698, "b": 2.512 },
             "log10_y_std_dev": 0.223,
@@ -171,6 +179,7 @@
         "A_from_Mw": [
           {
             "source": "Table 1",
+            "description": "Not an independent regression: Table 1 states the magnitude-area coefficients were calculated from those of rupture length and rupture width.",
             "equation_form": "log10(Y) = a + b * X",
             "coefficients": { "a": -3.486, "b": 0.942 },
             "log10_y_std_dev": 0.184,
@@ -191,6 +200,7 @@
         "AD_from_A": [
           {
             "source": "Table 2",
+            "description": "Table 2 gives no data range; range_x is the Table 1 range of the independent variable. Weak relation: r2 = 0.43 in Table 2.",
             "equation_form": "log10(Y) = a + b * log10(X)",
             "coefficients": { "a": -1.875, "b": 0.593 },
             "log10_y_std_dev": 0.302,
@@ -201,6 +211,7 @@
         "AD_from_L": [
           {
             "source": "Table 2",
+            "description": "Table 2 gives no data range; range_x is the Table 1 range of the independent variable. Weak relation: r2 = 0.48 in Table 2.",
             "equation_form": "log10(Y) = a + b * log10(X)",
             "coefficients": { "a": -1.473, "b": 0.789 },
             "log10_y_std_dev": 0.276,
@@ -211,6 +222,7 @@
         "AD_from_W": [
           {
             "source": "Table 2",
+            "description": "Table 2 gives no data range; range_x is the Table 1 range of the independent variable. Weak relation: r2 = 0.10 in Table 2.",
             "equation_form": "log10(Y) = a + b * log10(X)",
             "coefficients": { "a": -3.092, "b": 2.391 },
             "log10_y_std_dev": 0.178,
@@ -243,6 +255,7 @@
         "A_from_Mw": [
           {
             "source": "Table 1",
+            "description": "Not an independent regression: Table 1 states the magnitude-area coefficients were calculated from those of rupture length and rupture width.",
             "equation_form": "log10(Y) = a + b * X",
             "coefficients": { "a": -3.292, "b": 0.949 },
             "log10_y_std_dev": 0.150,
@@ -263,6 +276,7 @@
         "AD_from_A": [
           {
             "source": "Table 2",
+            "description": "Table 2 gives no data range; range_x is the Table 1 range of the independent variable. Weak relation: r2 = 0.35 in Table 2.",
             "equation_form": "log10(Y) = a + b * log10(X)",
             "coefficients": { "a": -2.375, "b": 0.582 },
             "log10_y_std_dev": 0.257,
@@ -273,6 +287,7 @@
         "AD_from_L": [
           {
             "source": "Table 2",
+            "description": "Table 2 gives no data range; range_x is the Table 1 range of the independent variable. Weak relation: r2 = 0.34 in Table 2.",
             "equation_form": "log10(Y) = a + b * log10(X)",
             "coefficients": { "a": -2.320, "b": 1.092 },
             "log10_y_std_dev": 0.213,
@@ -283,6 +298,7 @@
         "AD_from_W": [
           {
             "source": "Table 2",
+            "description": "Table 2 gives no data range; range_x is the Table 1 range of the independent variable. Weak relation: r2 = 0.25 in Table 2.",
             "equation_form": "log10(Y) = a + b * log10(X)",
             "coefficients": { "a": -2.438, "b": 1.244 },
             "log10_y_std_dev": 0.213,

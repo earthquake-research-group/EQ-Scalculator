@@ -194,7 +194,7 @@
             <div class="section">
                 <h2>Model selection</h2>
                 <div id="mcModelSelection">
-                    <p class="section-description">Select models and assign weights. Weights must sum to 100%.</p>
+                    <p class="section-description">Select models and assign weights. Weights are relative: they are normalised to sum to 100% when the simulation runs.</p>
                     <div id="mcModelList"></div>
                     <div class="metric" style="margin-top: 15px;">
                         <div class="metric-label">Total Weight</div>
@@ -340,10 +340,19 @@
         <div class="section">
             <h2>Method notes</h2>
             <p class="section-description">
-                Relations are solved in both directions. An inverse solution is an exact
-                algebraic inversion of the stored forward relation rather than a separate
+                Relations are solved in both directions. Where a paper publishes a
+                regression in each direction (Wells and Coppersmith, 1994), the published
+                regression for the direction asked for is used. Otherwise an inverse solution
+                is an exact algebraic inversion of the stored relation rather than a separate
                 regression — sound where the slope is theoretically fixed, but subject to
                 regression dilution when inverting an ordinary least-squares fit.
+            </p>
+            <p class="section-description">
+                Seismic moment and moment magnitude are converted in either of two
+                conventions: Hanks and Kanamori (1979), M<sub>w</sub> = ⅔ log₁₀(M<sub>0</sub>
+                [dyne·cm]) − 10.7, or M<sub>w</sub> = (log₁₀(M<sub>0</sub> [N·m]) − 9.1) / 1.5,
+                the form Leonard (2014) states. They differ by a constant 0.033 magnitude
+                units; use the convention of the paper you are chaining through.
             </p>
             <p class="section-description">
                 Relations may be piecewise: each is stored as ordered segments with validity
@@ -355,8 +364,17 @@
                 claimed applicability, which is not the same as the extent of the data they
                 fitted: a relation may publish no upper bound and still have no observations
                 anywhere near your input.
-                Monte Carlo sampling perturbs the regression intercept, or applies the
-                published scatter in log₁₀(Y), depending on which the source paper reports.
+            </p>
+            <p class="section-description">
+                Model uncertainty is applied in the space the source publishes it: magnitude
+                units for a relation that gives M<sub>w</sub>, log₁₀ units for one that gives a
+                dimension. Leonard (2014) publishes a one-standard-deviation range of each
+                intercept in place of a scatter, and that range is often not centred on the
+                intercept; each side is used as printed, so a Monte Carlo run has the
+                published intercept as its median and the published bounds as its 16th and
+                84th percentiles. A relation whose source gives no standard deviation is run
+                without model uncertainty, and the simulation says so. Model weights are
+                relative and are normalised when the simulation runs.
             </p>
         </div>
     </div>

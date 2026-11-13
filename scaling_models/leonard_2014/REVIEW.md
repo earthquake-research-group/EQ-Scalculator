@@ -11,7 +11,7 @@ Leonard's relations are not independent regressions; they all derive from:
 - `M0 = mu * A * D_Av` with `mu = 3.3e10 Pa` (`log10(mu) = 10.5185`)
 - `W = C1 * L^(2/3)` up to width saturation (`C1 = 10^a(A_from_L seg 2)`; interplate SS 15.0, SCR SS 11.7)
 - `D_Av = C2 * A^0.5` (`C2 = 10^a(D_from_A)`; interplate SS 10^-4.432, SCR SS 10^-4.149)
-- `Mw = (2/3) * log10(M0[N·m]) - 6.07` (Hanks & Kanamori)
+- `Mw = (log10(M0[N·m]) − 9.1) / 1.5`, as the paper states in its Discussion (citing Kanamori and Anderson, 1975; Kanamori, 1978; Purcaru and Berckhemer, 1978). That is `(2/3)·log10(M0) − 6.0667`; the derivations below were written with the constant rounded to 6.07. It is not the Hanks & Kanamori (1979) form, `(2/3)·log10(M0[dyne·cm]) − 10.7`, which is `(2/3)·log10(M0[N·m]) − 6.033` (see the 2026-11-13 notes at the end)
 
 Every entry can therefore be cross-derived from the others. `tools/verify_models.mjs` automates these checks.
 
@@ -22,7 +22,8 @@ Every entry can therefore be cross-derived from the others. `tools/verify_models
 | `A_from_L`, `W_from_L`, `W_from_A` (all styles) | Faithful to Table 3, self-consistent — unchanged |
 | `D_from_A`, `D_from_L`, `D_from_W` (all styles) | Faithful to Table 3, self-consistent — unchanged. **The strike-slip AD↔L coefficients are correct as published.** |
 | `M0_from_A`, `M0_from_L`, `M0_from_W`, `M0_from_L_SR` | Faithful to Table 3, self-consistent — unchanged |
-| `Mw_from_A`, `Mw_from_L`, `Mw_from_W`, `Mw_from_L_SR` | Faithful to Table 4 — unchanged (see quirks below) |
+| `Mw_from_A`, `Mw_from_L`, `Mw_from_W` | Faithful to Table 4 — unchanged (see quirks below) |
+| `Mw_from_L_SR` (SCR Dip-Slip, first segment) | **Corrected** — erratum 3 |
 | `M0_from_D` (all four styles) | **Corrected** — erratum 1 |
 | `Mw_from_D` (SCR Strike-Slip only) | **Corrected** — erratum 2 |
 
@@ -54,10 +55,20 @@ Before the correction, the app gave contradictory answers for the same physical 
 The paper prints `a = 3.71` (S(a) 3.62–3.82) — exactly `(2/3)·14.67 − 6.07`, i.e. it inherits the Table 3 error above (a 1 m average-slip earthquake is not Mw 3.7). An earlier transcription of this repo silently changed the leading digit to 6.71, which is not derivable from anything. The self-consistent value is
 
 ```
-a = (2/3)·18.82 − 6.07 = 6.47      (equivalently: Mw_from_A 4.18 + 2·(a(D_from_A) + 3) = 6.48; rounding)
+a = (2/3)·18.82 − 6.07 = 6.47      (equivalently: Mw_from_A 4.18 − 2·(a(D_from_A) + 3) = 6.48; rounding)
 ```
 
 with S(a) = (2/3)·[18.54, 19.14] − 6.07 = **"6.29-6.69"**. `range_x` restored to the paper's ">0" (the JSON had [0.2, null]).
+
+## Erratum 3 — SCR Dip-Slip `Mw_from_L_SR`, first segment (added 2026-11-13)
+
+Table 4 prints `a = 5.12` for `Mw = a + 0.953·log(L_SR)` (L_SR ≤ 15 km). Three things in the paper give 5.16 instead:
+
+- the text on p. 2956: "which equates to Mw = 5.16 + 0.953 log(L_SR)";
+- Table 3's `log M0 = 12.55 + 1.43·log L_SR` (metres), which converts to `(12.55 + 1.43·3 − 9.1)/1.5 = 5.16`;
+- continuity: at 15 km the second segment gives `4.32 + 1.667·log(15) = 6.281`; 5.16 gives 6.281, whereas 5.12 gives 6.241 (a 0.04 Mw step).
+
+Corrected to **5.16**. This is a reading of the paper's own text and Table 3, not a published erratum.
 
 ## Paper-internal quirks — kept as printed, documented here
 
@@ -78,8 +89,19 @@ Context for interpreting it:
 
 ## Related app fixes made with this review
 
-- `js/solver.js` — Monte Carlo previously did `parseFloat("-4.30 to -3.40")` → σ = −4.30 (several orders of magnitude of spurious scatter on every Leonard run). Leonard's `std_dev_a` strings are the paper's *one-standard-deviation range of a* (Table 3 footnote), so σ is now `|hi − lo| / 2` (`parseStdDevA`); plain numeric values (Yang et al. 2020) behave as before.
+- `js/solver.js` — Monte Carlo previously did `parseFloat("-4.30 to -3.40")` → σ = −4.30 (several orders of magnitude of spurious scatter on every Leonard run). Leonard's `std_dev_a` strings are the paper's *one-standard-deviation range of a* (Table 3 footnote), so σ is now `|hi − lo| / 2` (`parseStdDevA`); plain numeric values (Yang et al. 2021) behave as before.
 - `js/solver.js` — inverse solving of a saturated (b = 0) segment, e.g. W→L for interplate SS with W ≥ 17.5 km, returned `Infinity`; it now returns the standard calculation error (length is genuinely unconstrained by a saturated width).
+
+## Later changes (2026-11-13)
+
+Made after a second, independent check of the paper. Items 1 and 2 change how the app behaves; neither changes a stored coefficient.
+
+1. **The S(a) ranges are used as printed, one side at a time.** The fix above took σ as the half-width `|hi − lo| / 2` and sampled a symmetric normal. The printed ranges are often not centred on `a`, so the solver now takes `a − lo` below and `hi − a` above (`parseStdDevARange`, `scatterFor`) and samples each side separately (`sampleScatterDeviate`). A Monte Carlo run then has the published intercept as its median and the published bounds as its 16th and 84th percentiles; the comparison table's ±1σ columns are the published bounds. Three caveats:
+   - The paper says only "Sa is the one standard deviation range of a". The two-sided normal is a choice that reproduces the three printed numbers; the paper does not give a distribution. The density has a step at the median wherever the sides differ.
+   - It matters for few relations. The intercept sits more than 25% of the half-width off-centre in 7 of the 74 ranges, and all seven are width relations: `M0_from_W` and `Mw_from_W` for interplate dip-slip, SCR dip-slip and SCR strike-slip, and SCR strike-slip `D_from_W`. For the rest the result is practically the symmetric one.
+   - Two of those seven (`Mw_from_W` for SCR dip-slip and SCR strike-slip) are rows that quirk 3 above identifies as carried over from Leonard (2010) with intercepts about 0.15 Mw high. Where the central value is itself doubtful, the asymmetry of its range should not be read as a real skew in the uncertainty.
+2. **Magnitude definition.** The paper states `Mw = (log M0 − 9.1)/1.5`. The app now offers that form and the Hanks & Kanamori (1979) form (`(2/3)·log M0[dyne·cm] − 10.7`) wherever M0 and Mw are converted; they differ by a constant 1/30 of a magnitude unit. Chaining through Leonard's M0 relations agrees with his direct Mw relations only under the 9.1 form. `tools/verify_models.mjs` now uses the 9.1 form for every Table 3 ↔ Table 4 check, and all of them still pass.
+3. **Open point, erratum 2.** The unrounded SCR strike-slip `M0_from_D` intercept is 18.8165. It gives an `Mw_from_D` intercept of 6.474 with the constant rounded to 6.07, and 6.478 with the paper's 9.1 form; the route through `Mw_from_A` gives 6.478. The stored value is **6.47**. Under the paper's own definition it rounds to 6.48. The difference is 0.01 Mw and the value has been left as it was.
 
 ## Re-verifying
 
@@ -87,4 +109,4 @@ Context for interpreting it:
 node tools/verify_models.mjs
 ```
 
-asserts breakpoint continuity, all framework identities, the corrected values, spot calculations through the real `js/solver.js`, and the sigma parser. Pass a path as an argument to point the Leonard checks at an alternative copy of the file.
+asserts breakpoint continuity, all framework identities, the corrected values, spot calculations through the real `js/solver.js`, the sigma parsers, and that the two sides of every S(a) range are applied as printed. Pass a path as an argument to point the Leonard checks at an alternative copy of the file.

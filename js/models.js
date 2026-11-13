@@ -29,7 +29,7 @@ async function loadAllModels() {
             'scaling_models/leonard_2014/leonard_2014.json',
             'scaling_models/wells_coppersmith_1994/wells_coppersmith_1994.json',
             'scaling_models/somerville_2014/somerville_2014.json',
-            'scaling_models/yang_etal_2020/yang_2020.json',
+            'scaling_models/yang_etal_2021/yang_etal_2021.json',
             'scaling_models/stirling_etal_2024/stirling_etal_2024.json',
             'scaling_models/thingbaijam_etal_2017/thingbaijam_etal_2017.json',
             'scaling_models/strasser_etal_2010/strasser_etal_2010.json',
@@ -73,24 +73,41 @@ async function loadAllModels() {
 }
 
 /**
- * Find all available models grouped by paper name for optgroup rendering.
- * Returns the same model info as findAvailableModels but nested by paper.
+ * Collect every model that can convert inputVar to outputVar.
+ *
+ * A relation published as Y_from_X is used 'forward' for X -> Y and can be
+ * inverted algebraically for Y -> X. Where a paper publishes BOTH directions
+ * for the same fault type (Wells & Coppersmith 1994 gives M on log X and log X
+ * on M), the published regression for the requested direction is used and the
+ * algebraic inverse of the other is not offered: inverting an ordinary
+ * least-squares fit is not the regression the authors published.
+ *
+ * Keeping one entry per direction also stops two relations that share a model
+ * ID from silently overwriting each other.
+ *
  * @param {string} inputVar - Input parameter
  * @param {string} outputVar - Output parameter
- * @returns {Object} { paperName: { modelId: {paper, fault, key, direction}, ... }, ... }
+ * @returns {Array} [{ group, modelId, info: {paper, fault, key, direction} }, ...];
+ *                  M0 <-> Mw definitions carry paper 'virtual' plus mwConstant
  */
-function findAvailableModelsGrouped(inputVar, outputVar) {
-    const grouped = {};
+function collectModels(inputVar, outputVar) {
+    const found = new Map();   // modelId -> entry, in first-seen order
 
-    // Handle Hanks & Kanamori virtual model
+    // Definitions of moment magnitude for M0 <-> Mw. Two conventions are in
+    // use across the papers here, so both are listed (see MW_CONVENTIONS in
+    // units.js); `mwConstant` tells the caller which one an entry stands for.
     if ((inputVar === 'M0' && outputVar === 'Mw') ||
         (inputVar === 'Mw' && outputVar === 'M0')) {
-        grouped['Conversions'] = {
-            'Hanks & Kanamori (1979) Definition': {
-                paper: 'virtual', fault: 'virtual',
-                key: 'virtual', direction: 'virtual'
-            }
-        };
+        for (const convention of MW_CONVENTIONS) {
+            found.set(convention.id, {
+                group: 'Conversions',
+                modelId: convention.id,
+                info: {
+                    paper: 'virtual', fault: 'virtual', key: 'virtual', direction: 'virtual',
+                    mwConstant: convention.constant, provenance: convention.provenance
+                }
+            });
+        }
     }
 
     for (const paperName in allModels) {
@@ -102,7 +119,8 @@ function findAvailableModelsGrouped(inputVar, outputVar) {
                 const canonicalY = PARAMETER_ALIASES[y] || y;
                 const canonicalX = PARAMETER_ALIASES[x] || x;
 
-                let modelId = `${paperName} - ${faultName}`;
+                const baseId = `${paperName} - ${faultName}`;
+                let modelId = baseId;
                 let direction = null;
 
                 if (canonicalX === inputVar && canonicalY === outputVar) {
@@ -112,16 +130,39 @@ function findAvailableModelsGrouped(inputVar, outputVar) {
                     if (y === 'SRL' || y === 'L_SR') modelId += ` (from ${y})`;
                     direction = 'inverse';
                 }
+                if (direction === null) continue;
 
-                if (direction !== null) {
-                    if (!grouped[paperName]) grouped[paperName] = {};
-                    grouped[paperName][modelId] = {
-                        paper: paperName, fault: faultName,
-                        key: relationshipKey, direction
-                    };
+                // Same paper and fault type already matched in the other direction?
+                const otherId = [...found.keys()].find(id =>
+                    found.get(id).baseId === baseId && found.get(id).info.direction !== direction);
+                if (otherId !== undefined) {
+                    if (direction === 'inverse') continue;   // keep the published regression
+                    found.delete(otherId);                   // replace the inverse with it
                 }
+
+                found.set(modelId, {
+                    group: paperName,
+                    modelId,
+                    baseId,
+                    info: { paper: paperName, fault: faultName, key: relationshipKey, direction }
+                });
             }
         }
+    }
+    return [...found.values()];
+}
+
+/**
+ * Find all available models grouped by paper name for optgroup rendering.
+ * @param {string} inputVar - Input parameter
+ * @param {string} outputVar - Output parameter
+ * @returns {Object} { paperName: { modelId: {paper, fault, key, direction}, ... }, ... }
+ */
+function findAvailableModelsGrouped(inputVar, outputVar) {
+    const grouped = {};
+    for (const entry of collectModels(inputVar, outputVar)) {
+        if (!grouped[entry.group]) grouped[entry.group] = {};
+        grouped[entry.group][entry.modelId] = entry.info;
     }
     return grouped;
 }
@@ -130,64 +171,13 @@ function findAvailableModelsGrouped(inputVar, outputVar) {
  * Find all available models for a given input-output parameter pair
  * @param {string} inputVar - Input parameter
  * @param {string} outputVar - Output parameter
- * @returns {Object} Dictionary of available models
+ * @returns {Object} Dictionary of available models keyed by model ID
  */
 function findAvailableModels(inputVar, outputVar) {
     const models = {};
-    
-    // Handle Hanks & Kanamori (1979) for M0-Mw conversions
-    if ((inputVar === 'M0' && outputVar === 'Mw') || 
-        (inputVar === 'Mw' && outputVar === 'M0')) {
-        models['Hanks & Kanamori (1979) Definition'] = {
-            paper: 'virtual',
-            fault: 'virtual',
-            key: 'virtual',
-            direction: 'virtual'
-        };
+    for (const entry of collectModels(inputVar, outputVar)) {
+        models[entry.modelId] = entry.info;
     }
-    
-    // Search through all loaded models
-    for (const paperName in allModels) {
-        const paper = allModels[paperName];
-        for (const faultName in paper.fault_types) {
-            const fault = paper.fault_types[faultName];
-            
-            for (const relationshipKey in fault) {
-                const [y, x] = relationshipKey.split('_from_');
-                const canonicalY = PARAMETER_ALIASES[y] || y;
-                const canonicalX = PARAMETER_ALIASES[x] || x;
-                
-                let modelId = `${paperName} - ${faultName}`;
-                
-                // Forward direction: Input matches X, Output matches Y
-                if (canonicalX === inputVar && canonicalY === outputVar) {
-                    if (x === 'SRL' || x === 'L_SR') {
-                        modelId += ` (from ${x})`;
-                    }
-                    models[modelId] = {
-                        paper: paperName,
-                        fault: faultName,
-                        key: relationshipKey,
-                        direction: 'forward'
-                    };
-                }
-                
-                // Inverse direction: Input matches Y, Output matches X
-                else if (canonicalY === inputVar && canonicalX === outputVar) {
-                    if (y === 'SRL' || y === 'L_SR') {
-                        modelId += ` (from ${y})`;
-                    }
-                    models[modelId] = {
-                        paper: paperName,
-                        fault: faultName,
-                        key: relationshipKey,
-                        direction: 'inverse'
-                    };
-                }
-            }
-        }
-    }
-    
     return models;
 }
 

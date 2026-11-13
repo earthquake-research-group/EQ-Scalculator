@@ -1,15 +1,15 @@
 {
   "Stirling et al. 2024": {
     "citation": "Stirling, M., Fitzgerald, M., Shaw, B., and Ross, C. (2024). New Magnitude-Area Scaling Relations for the New Zealand National Seismic Hazard Model 2022. Bulletin of the Seismological Society of America, 114(1), 137-149. doi: 10.1785/0120230114",
-    "description": "Mw-area scaling relations developed for the New Zealand National Seismic Hazard Model 2022 (NZ NSHM 2022). Two sets of relations are provided: the NZ NSHM 2022 final set (adjusted for historical NZ observations and USGS practice) and an alternative set reflecting the quantitative scoring of published relations more directly. All equations are of the form Mw = log10(A) + C.",
+    "description": "Mw-area scaling relations developed for the New Zealand National Seismic Hazard Model 2022 (NZ NSHM 2022). Two sets of relations are provided: the NZ NSHM 2022 final set (adjusted for historical NZ observations and USGS practice) and an alternative set reflecting the quantitative scoring of published relations more directly. All equations are of the form Mw = log10(A) + C. The relations were evaluated against instrumentally recorded earthquakes of Mw 7 and larger. The paper publishes no standard deviation, so no model uncertainty is applied to these relations; the three relations in each set are epistemic branches.",
     "fault_types": {
       "Crustal (NZ NSHM 2022 - Lower)": {
         "Mw_from_A": [
           {
             "source": "Equation 10",
+            "description": "Checked against the paper (equation number as cited). The paper publishes no standard deviation: it states that quantifying the uncertainty in Mw is not addressed by its procedure and only suggests that 0.2 to 0.3 magnitude units would be adequate. The 0.25 formerly stored here was not a published value and has been removed. The lower, mean/preferred and upper relations are alternative logic-tree branches (epistemic uncertainty), not a distribution to sample.",
             "equation_form": "Y = a + b * log10(X)",
             "coefficients": { "a": 4.1, "b": 1.0 },
-            "log10_y_std_dev": 0.25,
             "units": { "y": null, "x": "km^2" },
             "range_x": [null, null]
           }
@@ -19,9 +19,9 @@
         "Mw_from_A": [
           {
             "source": "Equation 11",
+            "description": "Checked against the paper (equation number as cited). The paper publishes no standard deviation: it states that quantifying the uncertainty in Mw is not addressed by its procedure and only suggests that 0.2 to 0.3 magnitude units would be adequate. The 0.25 formerly stored here was not a published value and has been removed. The lower, mean/preferred and upper relations are alternative logic-tree branches (epistemic uncertainty), not a distribution to sample.",
             "equation_form": "Y = a + b * log10(X)",
             "coefficients": { "a": 4.2, "b": 1.0 },
-            "log10_y_std_dev": 0.25,
             "units": { "y": null, "x": "km^2" },
             "range_x": [null, null]
           }
@@ -31,9 +31,9 @@
         "Mw_from_A": [
           {
             "source": "Equation 12",
+            "description": "Checked against the paper (equation number as cited). The paper publishes no standard deviation: it states that quantifying the uncertainty in Mw is not addressed by its procedure and only suggests that 0.2 to 0.3 magnitude units would be adequate. The 0.25 formerly stored here was not a published value and has been removed. The lower, mean/preferred and upper relations are alternative logic-tree branches (epistemic uncertainty), not a distribution to sample.",
             "equation_form": "Y = a + b * log10(X)",
             "coefficients": { "a": 4.3, "b": 1.0 },
-            "log10_y_std_dev": 0.25,
             "units": { "y": null, "x": "km^2" },
             "range_x": [null, null]
           }
@@ -43,9 +43,9 @@
         "Mw_from_A": [
           {
             "source": "Equation 13",
+            "description": "Checked against the paper (equation number as cited). The paper publishes no standard deviation: it states that quantifying the uncertainty in Mw is not addressed by its procedure and only suggests that 0.2 to 0.3 magnitude units would be adequate. The 0.25 formerly stored here was not a published value and has been removed. The lower, mean/preferred and upper relations are alternative logic-tree branches (epistemic uncertainty), not a distribution to sample.",
             "equation_form": "Y = a + b * log10(X)",
             "coefficients": { "a": 3.9, "b": 1.0 },
-            "log10_y_std_dev": 0.25,
             "units": { "y": null, "x": "km^2" },
             "range_x": [null, null]
           }
@@ -55,9 +55,9 @@
         "Mw_from_A": [
           {
             "source": "Equation 14",
+            "description": "Checked against the paper (equation number as cited). The paper publishes no standard deviation: it states that quantifying the uncertainty in Mw is not addressed by its procedure and only suggests that 0.2 to 0.3 magnitude units would be adequate. The 0.25 formerly stored here was not a published value and has been removed. The lower, mean/preferred and upper relations are alternative logic-tree branches (epistemic uncertainty), not a distribution to sample.",
             "equation_form": "Y = a + b * log10(X)",
             "coefficients": { "a": 4.0, "b": 1.0 },
-            "log10_y_std_dev": 0.25,
             "units": { "y": null, "x": "km^2" },
             "range_x": [null, null]
           }
@@ -67,9 +67,9 @@
         "Mw_from_A": [
           {
             "source": "Equation 15",
+            "description": "Checked against the paper (equation number as cited). The paper publishes no standard deviation: it states that quantifying the uncertainty in Mw is not addressed by its procedure and only suggests that 0.2 to 0.3 magnitude units would be adequate. The 0.25 formerly stored here was not a published value and has been removed. The lower, mean/preferred and upper relations are alternative logic-tree branches (epistemic uncertainty), not a distribution to sample.",
             "equation_form": "Y = a + b * log10(X)",
             "coefficients": { "a": 4.1, "b": 1.0 },
-            "log10_y_std_dev": 0.25,
             "units": { "y": null, "x": "km^2" },
             "range_x": [null, null]
           }
@@ -79,21 +79,21 @@
         "Mw_from_A": [
           {
             "source": "Equation 16",
+            "description": "Checked against the paper (equation number as cited). The paper publishes no standard deviation: it states that quantifying the uncertainty in Mw is not addressed by its procedure and only suggests that 0.2 to 0.3 magnitude units would be adequate. The 0.25 formerly stored here was not a published value and has been removed. The lower, mean/preferred and upper relations are alternative logic-tree branches (epistemic uncertainty), not a distribution to sample.",
             "equation_form": "Y = a + b * log10(X)",
             "coefficients": { "a": 3.9, "b": 1.0 },
-            "log10_y_std_dev": 0.25,
             "units": { "y": null, "x": "km^2" },
             "range_x": [null, null]
           }
         ]
       },
-      "Crustal - Alternative (Preferred)": {
+      "Crustal - Alternative (Mean)": {
         "Mw_from_A": [
           {
             "source": "Equation 17",
+            "description": "Checked against the paper (equation number as cited). The paper publishes no standard deviation: it states that quantifying the uncertainty in Mw is not addressed by its procedure and only suggests that 0.2 to 0.3 magnitude units would be adequate. The 0.25 formerly stored here was not a published value and has been removed. The lower, mean/preferred and upper relations are alternative logic-tree branches (epistemic uncertainty), not a distribution to sample.",
             "equation_form": "Y = a + b * log10(X)",
             "coefficients": { "a": 4.1, "b": 1.0 },
-            "log10_y_std_dev": 0.25,
             "units": { "y": null, "x": "km^2" },
             "range_x": [null, null]
           }
@@ -103,9 +103,9 @@
         "Mw_from_A": [
           {
             "source": "Equation 18",
+            "description": "Checked against the paper (equation number as cited). The paper publishes no standard deviation: it states that quantifying the uncertainty in Mw is not addressed by its procedure and only suggests that 0.2 to 0.3 magnitude units would be adequate. The 0.25 formerly stored here was not a published value and has been removed. The lower, mean/preferred and upper relations are alternative logic-tree branches (epistemic uncertainty), not a distribution to sample.",
             "equation_form": "Y = a + b * log10(X)",
             "coefficients": { "a": 4.3, "b": 1.0 },
-            "log10_y_std_dev": 0.25,
             "units": { "y": null, "x": "km^2" },
             "range_x": [null, null]
           }
@@ -115,21 +115,21 @@
         "Mw_from_A": [
           {
             "source": "Equation 19",
+            "description": "Checked against the paper (equation number as cited). The paper publishes no standard deviation: it states that quantifying the uncertainty in Mw is not addressed by its procedure and only suggests that 0.2 to 0.3 magnitude units would be adequate. The 0.25 formerly stored here was not a published value and has been removed. The lower, mean/preferred and upper relations are alternative logic-tree branches (epistemic uncertainty), not a distribution to sample.",
             "equation_form": "Y = a + b * log10(X)",
             "coefficients": { "a": 3.6, "b": 1.0 },
-            "log10_y_std_dev": 0.25,
             "units": { "y": null, "x": "km^2" },
             "range_x": [null, null]
           }
         ]
       },
-      "Subduction Interface - Alternative (Preferred)": {
+      "Subduction Interface - Alternative (Mean)": {
         "Mw_from_A": [
           {
             "source": "Equation 20",
+            "description": "Checked against the paper (equation number as cited). The paper publishes no standard deviation: it states that quantifying the uncertainty in Mw is not addressed by its procedure and only suggests that 0.2 to 0.3 magnitude units would be adequate. The 0.25 formerly stored here was not a published value and has been removed. The lower, mean/preferred and upper relations are alternative logic-tree branches (epistemic uncertainty), not a distribution to sample.",
             "equation_form": "Y = a + b * log10(X)",
             "coefficients": { "a": 3.9, "b": 1.0 },
-            "log10_y_std_dev": 0.25,
             "units": { "y": null, "x": "km^2" },
             "range_x": [null, null]
           }
@@ -139,9 +139,9 @@
         "Mw_from_A": [
           {
             "source": "Equation 21",
+            "description": "Checked against the paper (equation number as cited). The paper publishes no standard deviation: it states that quantifying the uncertainty in Mw is not addressed by its procedure and only suggests that 0.2 to 0.3 magnitude units would be adequate. The 0.25 formerly stored here was not a published value and has been removed. The lower, mean/preferred and upper relations are alternative logic-tree branches (epistemic uncertainty), not a distribution to sample.",
             "equation_form": "Y = a + b * log10(X)",
             "coefficients": { "a": 4.1, "b": 1.0 },
-            "log10_y_std_dev": 0.25,
             "units": { "y": null, "x": "km^2" },
             "range_x": [null, null]
           }

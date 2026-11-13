@@ -21,10 +21,25 @@ Relates the standard earthquake source parameters — moment magnitude (Mw), sei
 | Comparison | The same input through many models side by side, with ±1σ and validity flags |
 | Chain | Multi-step calculations, e.g. Mw → A → AD |
 
-Every relation can be solved in **both directions**. Inverse solutions are exact algebraic
-inversions of the stored forward relation, not separate regressions — reasonable where the
-slope is theoretically fixed (as in Leonard's framework), but be aware of regression
-dilution when inverting an ordinary least-squares fit.
+Every relation can be solved in **both directions**. Where a paper publishes a regression
+in each direction (Wells & Coppersmith, 1994), the published regression for the direction
+asked for is used. Otherwise the inverse is an exact algebraic inversion of the stored
+relation, not a separate regression — reasonable where the slope is theoretically fixed
+(as in Leonard's framework), but be aware of regression dilution when inverting an
+ordinary least-squares fit.
+
+**Moment magnitude** is offered in two conventions wherever M0 and Mw are converted:
+Hanks & Kanamori (1979), Mw = ⅔·log₁₀(M0 [dyne·cm]) − 10.7, and
+Mw = (log₁₀(M0 [N·m]) − 9.1) / 1.5, the form Leonard (2014) states. They differ by a
+constant 0.033 magnitude units. Use the convention of the paper you are chaining through.
+
+**Model uncertainty** is applied in the space the source publishes it: magnitude units for
+relations that give Mw, log₁₀ units for relations that give a dimension. Leonard (2014)
+publishes a one-standard-deviation *range* of each intercept instead of a scatter, and the
+range is often not centred on the intercept; each side is used as printed, so no symmetry
+is assumed. Relations whose source gives no standard deviation (Stirling et al., 2024) are
+run without model uncertainty, and the Monte Carlo tab says so. Monte Carlo model weights
+are relative and are normalised when the simulation runs.
 
 Relations may be **piecewise**: a relation is stored as an ordered list of segments with
 validity ranges, so bilinear and trilinear models are represented natively, and the app
@@ -63,19 +78,21 @@ D̄ = C2·√A) plus spot calculations run through the real solver.
 Where a **published table is internally inconsistent**, the correction and its derivation
 are documented next to the data rather than applied silently. See
 [`scaling_models/leonard_2014/REVIEW.md`](scaling_models/leonard_2014/REVIEW.md), which
-records two such errata in Leonard (2014) and the evidence for the corrected values.
+records three such errata in Leonard (2014) and the evidence for the corrected values.
 
 Source-paper PDFs are deliberately **not** redistributed here (publisher copyright); they
 are gitignored, so you can keep local copies for verification. Cite the DOIs.
 
 ## Running locally
 
-No build step, no dependencies, no server required:
+No build step and no dependencies. The model files are loaded with `fetch()`, which
+browsers block for a page opened straight from disk (in Chromium the page opens but no
+models load), so serve the folder with any static file server:
 
 ```sh
 git clone https://github.com/james-lagreca/EQ-Scalculator.git
 cd EQ-Scalculator
-open index.html          # or just double-click it
+python3 -m http.server 8000     # then open http://localhost:8000
 ```
 
 Plotly and PapaParse load from a CDN, so first load needs a network connection.
@@ -85,7 +102,9 @@ Plotly and PapaParse load from a CDN, so first load needs a network connection.
 1. Create `scaling_models/<model>/<model>.json` following the schema of any existing file:
    a top-level paper name, then `fault_types` → `"<Y>_from_<X>"` → an array of segments,
    each with `equation_form`, `coefficients` (`a`, `b`), `units`, `range_x`, and a σ
-   (`log10_y_std_dev`, or `std_dev_a` for uncertainty on the intercept).
+   (`log10_y_std_dev`, or `std_dev_a` for uncertainty on the intercept: either a number,
+   or the published one-standard-deviation range as a string such as `"3.61-3.73"`, whose
+   two sides are then used as printed). Omit both if the source publishes none.
 2. Add one line to the `modelFiles` array in `js/models.js`.
 3. Run `node tools/verify_models.mjs`.
 
